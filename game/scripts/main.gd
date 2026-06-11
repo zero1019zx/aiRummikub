@@ -1,0 +1,911 @@
+## 主场景: 分数挑战模式单局 (Balatro式)
+## 在限定回合内, 通过出牌+桌面自由重组凑分, 达到目标分数即获胜
+extends Control
+
+# ---------- 布局常量 (720x1280 竖屏) ----------
+const TILE_SIZE := Vector2(70, 94)
+const SX := 76.0
+const SY := 104.0
+const TABLE_COLS := 9
+const TABLE_ROWS := 6
+const RACK_COLS := 9
+const RACK_ROWS := 2
+const TABLE_ORIGIN := Vector2(21, 190)
+const RACK_ORIGIN := Vector2(21, 845)
+const DROP_RADIUS := 70.0
+
+# ---------- 对局常量 ----------
+const HAND_START := 8
+const MAX_TURNS := 5
+const EMPTY_HAND_BONUS := 20
+const HINTS_TOTAL := 3
+const EXCHANGES_PER_FLOOR := 2
+const REORG_MULT_STEP := 0.5 # 每张被重组的旧牌 +0.5x
+const FLOOR_TARGETS: Array[int] = [40, 60, 85, 125, 180, 260, 380, 550]
+const PLAYER_MAX_HP := 60 # 对战模式我方体力(每层重置); 敌方体力=该层目标分
+
+# ---------- 配色 (对齐视觉设定图) ----------
+const COL_BG := Color("#fbf0d9")
+const COL_FELT := Color("#4a9d5b")
+const COL_FELT_EDGE := Color("#37824a")
+const COL_SLOT := Color(0, 0, 0, 0.10)
+const COL_WOOD := Color("#9c6633")
+const COL_WOOD_EDGE := Color("#774c21")
+const COL_PLANK := Color("#b07a45")
+const COL_TOPBAR := Color("#2e8b4f")
+const COL_TOPBAR_EDGE := Color("#246c3d")
+const COL_BTN_PLAY := Color("#3cc25e")
+const COL_BTN_SORT := Color("#3b8bea")
+const COL_BTN_HINT := Color("#f6b51e")
+const COL_BTN_UNDO := Color("#ef7f33")
+
+# ---------- 状态 ----------
+var deck: Array = []
+var table_grid: Array = [] # [row][col] -> TileNode 或 null
+var rack_grid: Array = []
+var score := 0
+var turn := 1
+var floor_num := 1
+var hints_left := HINTS_TOTAL
+var exchanges_left := EXCHANGES_PER_FLOOR
+var sort_by_color := true
+var game_over := false
+var snapshot: Array = []
+var start_groups := {} # uid -> 回合开始时所在牌组的成员uid数组(排序)
+var next_uid := 0
+var exchange_mode := false
+var overlay_nodes: Array = []
+var relic_mgr := RelicManager.new()
+var mode := "score" # "score" 分数挑战 / "battle" 对战原型
+var player_hp := PLAYER_MAX_HP
+var enemy_hp := 0
+var enemy_hand: Array = []
+
+# ---------- UI 引用 ----------
+var tiles_layer: Control
+var lbl_turn: Label
+var lbl_score: Label
+var lbl_target: Label
+var lbl_deck: Label
+var lbl_hint_count: Label
+var lbl_ex_count: Label
+var toast_label: Label
+var btn_play: Button
+var btn_exchange: Button
+var ui_font: FontFile
+
+func _ready() -> void:
+	_build_static_ui()
+	_show_mode_select()
+
+func _show_mode_select() -> void:
+	game_over = true
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
+	overlay_nodes.append(dim)
+	var panel := _rounded_panel(Rect2(80, 400, 560, 440), Color("#fdf6e8"), 24)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(panel)
+	overlay_nodes.append(panel)
+	var title := _make_label("选择模式", 46, Color("#6b4a23"))
+	title.size = Vector2(560, 70)
+	title.position = Vector2(0, 46)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(title)
+	var b1 := _make_button("分数挑战", "green", Rect2(130, 160, 300, 90))
+	b1.pressed.connect(func ():
+		mode = "score"
+		floor_num = 1
+		_start_floor())
+	panel.add_child(b1)
+	var b2 := _make_button("对战原型", "purple", Rect2(130, 290, 300, 90))
+	b2.pressed.connect(func ():
+		mode = "battle"
+		floor_num = 1
+		_start_floor())
+	panel.add_child(b2)
+
+func _floor_target() -> int:
+	return FLOOR_TARGETS[min(floor_num, FLOOR_TARGETS.size()) - 1]
+
+# ============================================================
+# 静态UI搭建
+# ============================================================
+func _build_static_ui() -> void:
+	# UI字体: Poppins(数字/英文) -> 中文回落到打包的CJK子集字体(Web端没有系统字体)
+	ui_font = load("res://assets/fonts/Poppins-Bold.ttf")
+	var cjk: FontFile = load("res://assets/fonts/cjk_subset.ttf")
+	if ui_font != null:
+		var fbs: Array[Font] = []
+		if cjk != null:
+			fbs.append(cjk)
+		fbs.append(ThemeDB.fallback_font)
+		ui_font.fallbacks = fbs
+
+	# 整幅背景: 天空场景 + 木桌 + 毛毡 (程序生成贴图)
+	var bg := _texture_rect("res://assets/ui/bg.png", Rect2(0, 0, 720, 1280))
+	add_child(bg)
+
+	# --- 顶部HUD (天空区) ---
+	var pill := _texture_rect("res://assets/ui/pill_cream.png", Rect2(222, 14, 276, 70))
+	add_child(pill)
+	lbl_turn = _make_label("第1层 1/%d" % MAX_TURNS, 30, Color("#6b4a23"))
+	lbl_turn.size = Vector2(276, 70)
+	lbl_turn.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_turn.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	pill.add_child(lbl_turn)
+
+	var badge_l := _texture_rect("res://assets/ui/badge_dark.png", Rect2(16, 24, 190, 52))
+	add_child(badge_l)
+	lbl_score = _make_label("得分 0", 26, Color("#ffd94d"))
+	lbl_score.size = Vector2(190, 52)
+	lbl_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_score.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	badge_l.add_child(lbl_score)
+
+	var badge_r := _texture_rect("res://assets/ui/badge_dark.png", Rect2(514, 24, 190, 52))
+	add_child(badge_r)
+	lbl_target = _make_label("目标 %d" % FLOOR_TARGETS[0], 26, Color.WHITE)
+	lbl_target.size = Vector2(190, 52)
+	lbl_target.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_target.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	badge_r.add_child(lbl_target)
+
+	lbl_deck = _make_label("牌库 0", 24, Color.WHITE)
+	lbl_deck.size = Vector2(720, 30)
+	lbl_deck.position = Vector2(0, 96)
+	lbl_deck.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_deck.add_theme_color_override("font_outline_color", Color("#2e6b3e"))
+	lbl_deck.add_theme_constant_override("outline_size", 4)
+	add_child(lbl_deck)
+
+	# --- 桌面格位 (极淡的暗块, 仅作落位指引) ---
+	for r in TABLE_ROWS:
+		for c in TABLE_COLS:
+			var slot := _rounded_panel(Rect2(_slot_pos("table", r, c) + Vector2(3, 3), TILE_SIZE - Vector2(6, 6)), Color(0, 0, 0, 0.05), 10)
+			add_child(slot)
+
+	# --- 牌架 (木纹贴图, 自带搁板) ---
+	var rackp := _texture_rect("res://assets/ui/rack.png", Rect2(10, 828, 700, 232))
+	add_child(rackp)
+
+	# --- 按钮行 (出牌/换牌/整理/提示/撤回) ---
+	btn_play = _make_button("出牌", "green", Rect2(12, 1086, 160, 84))
+	btn_play.pressed.connect(_on_end_turn)
+	add_child(btn_play)
+	btn_exchange = _make_button("换牌", "orange", Rect2(184, 1086, 124, 84))
+	btn_exchange.pressed.connect(_on_exchange)
+	add_child(btn_exchange)
+	lbl_ex_count = _badge_on(btn_exchange, str(EXCHANGES_PER_FLOOR))
+	var btn_sort := _make_button("整理", "blue", Rect2(320, 1086, 124, 84))
+	btn_sort.pressed.connect(_on_sort)
+	add_child(btn_sort)
+	var btn_hint := _make_button("提示", "yellow", Rect2(456, 1086, 124, 84))
+	btn_hint.pressed.connect(_on_hint)
+	add_child(btn_hint)
+	lbl_hint_count = _badge_on(btn_hint, str(HINTS_TOTAL))
+	var btn_undo := _make_button("撤回", "purple", Rect2(592, 1086, 124, 84))
+	btn_undo.pressed.connect(_on_undo)
+	add_child(btn_undo)
+
+	# 提示文字层
+	toast_label = _make_label("", 30, Color.WHITE)
+	toast_label.size = Vector2(640, 60)
+	toast_label.position = Vector2(40, 1190)
+	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast_label.add_theme_color_override("font_outline_color", Color("#5b3a14"))
+	toast_label.add_theme_constant_override("outline_size", 4)
+	add_child(toast_label)
+
+	# 牌的容器层(置顶)
+	tiles_layer = Control.new()
+	tiles_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tiles_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(tiles_layer)
+
+func _rounded_panel(rect: Rect2, color: Color, radius: int) -> Panel:
+	var p := Panel.new()
+	p.position = rect.position
+	p.size = rect.size
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = color
+	sb.set_corner_radius_all(radius)
+	p.add_theme_stylebox_override("panel", sb)
+	return p
+
+## 带深色底边的"糖果立体"面板
+func _candy_panel(rect: Rect2, color: Color, radius: int, edge_color: Color, edge_w: int) -> Panel:
+	var p := _rounded_panel(rect, color, radius)
+	var sb := p.get_theme_stylebox("panel") as StyleBoxFlat
+	sb.border_width_bottom = edge_w
+	sb.border_color = edge_color
+	sb.shadow_color = Color(0.3, 0.18, 0.05, 0.18)
+	sb.shadow_size = 4
+	sb.shadow_offset = Vector2(0, 3)
+	return p
+
+## 同色描边模拟粗体
+func _bold(l: Label, color: Color, outline: int) -> void:
+	l.add_theme_color_override("font_outline_color", color)
+	l.add_theme_constant_override("outline_size", outline)
+
+func _texture_rect(path: String, rect: Rect2) -> TextureRect:
+	var t := TextureRect.new()
+	t.texture = load(path)
+	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	t.stretch_mode = TextureRect.STRETCH_SCALE
+	t.position = rect.position
+	t.size = rect.size
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return t
+
+func _make_label(text: String, font_size: int, color: Color) -> Label:
+	var l := Label.new()
+	l.text = text
+	if ui_font != null:
+		l.add_theme_font_override("font", ui_font)
+	l.add_theme_font_size_override("font_size", font_size)
+	l.add_theme_color_override("font_color", color)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+## 糖果质感按钮: 9-slice 贴图 (btn_<name>.png / btn_<name>_p.png)
+func _make_button(text: String, color_name: String, rect: Rect2) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.position = rect.position
+	b.size = rect.size
+	if ui_font != null:
+		b.add_theme_font_override("font", ui_font)
+	b.add_theme_font_size_override("font_size", 34)
+	b.add_theme_color_override("font_color", Color.WHITE)
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_color", Color.WHITE)
+	b.add_theme_color_override("font_focus_color", Color.WHITE)
+	# 中文字形不加描边, 避免发糊; 仅留轻微深色投影增强可读性
+	b.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.25))
+	b.add_theme_constant_override("shadow_offset_y", 2)
+	var sb := _btn_stylebox("res://assets/ui/btn_%s.png" % color_name)
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", sb)
+	b.add_theme_stylebox_override("focus", sb)
+	var sbp := _btn_stylebox("res://assets/ui/btn_%s_p.png" % color_name)
+	sbp.content_margin_top = 10
+	b.add_theme_stylebox_override("pressed", sbp)
+	return b
+
+## 按钮右上角的红色计数角标
+func _badge_on(btn: Button, text: String) -> Label:
+	var badge := _rounded_panel(Rect2(btn.size.x - 34, -8, 34, 34), Color("#e74c3c"), 17)
+	var l := _make_label(text, 22, Color.WHITE)
+	l.position = Vector2(0, 2)
+	l.size = Vector2(34, 30)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	badge.add_child(l)
+	btn.add_child(badge)
+	return l
+
+func _btn_stylebox(path: String) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = load(path)
+	sb.texture_margin_left = 34
+	sb.texture_margin_right = 34
+	sb.texture_margin_top = 34
+	sb.texture_margin_bottom = 34
+	return sb
+
+# ============================================================
+# 对局流程
+# ============================================================
+## 开始(或重开)一层: 牌库重置/桌面清空/手牌重发, 遗物跨层保留
+func _start_floor() -> void:
+	for n in overlay_nodes:
+		n.queue_free()
+	overlay_nodes = []
+	for child in tiles_layer.get_children():
+		child.queue_free()
+	game_over = false
+	exchange_mode = false
+	btn_exchange.text = "换牌"
+	score = 0
+	turn = 1
+	hints_left = HINTS_TOTAL
+	exchanges_left = EXCHANGES_PER_FLOOR
+	deck = Rules.build_deck()
+	table_grid = []
+	for r in TABLE_ROWS:
+		table_grid.append([])
+		for c in TABLE_COLS:
+			table_grid[r].append(null)
+	rack_grid = []
+	for r in RACK_ROWS:
+		rack_grid.append([])
+		for c in RACK_COLS:
+			rack_grid[r].append(null)
+	for _i in HAND_START:
+		_draw_to_rack()
+	if mode == "battle":
+		player_hp = PLAYER_MAX_HP
+		enemy_hp = _floor_target()
+		enemy_hand = []
+		for _i in HAND_START:
+			if deck.size() > 0:
+				enemy_hand.append(deck.pop_back())
+	_take_snapshot()
+	_update_hud()
+
+func _draw_to_rack() -> bool:
+	if deck.is_empty():
+		return false
+	for r in RACK_ROWS:
+		for c in RACK_COLS:
+			if rack_grid[r][c] == null:
+				var def: Dictionary = deck.pop_back()
+				var tile := _create_tile(def, "rack", r, c)
+				rack_grid[r][c] = tile
+				return true
+	return false # 牌架已满
+
+func _create_tile(def: Dictionary, zone: String, row: int, col: int, uid: int = -1) -> TileNode:
+	var tile := TileNode.new()
+	tile.setup(def, TILE_SIZE)
+	if uid >= 0:
+		tile.uid = uid
+	else:
+		tile.uid = next_uid
+		next_uid += 1
+	tile.zone = zone
+	tile.home_zone = zone
+	tile.row = row
+	tile.col = col
+	tile.position = _slot_pos(zone, row, col)
+	tile.pick_started.connect(_on_tile_picked)
+	tile.drop_attempt.connect(_on_tile_dropped)
+	tile.clicked.connect(_on_tile_clicked)
+	tiles_layer.add_child(tile)
+	return tile
+
+func _slot_pos(zone: String, r: int, c: int) -> Vector2:
+	var origin := TABLE_ORIGIN if zone == "table" else RACK_ORIGIN
+	return origin + Vector2(c * SX, r * SY)
+
+func _grid_of(zone: String) -> Array:
+	return table_grid if zone == "table" else rack_grid
+
+# ---------- 拖拽 ----------
+func _on_tile_picked(tile: TileNode) -> void:
+	tiles_layer.move_child(tile, tiles_layer.get_child_count() - 1)
+
+func _on_tile_dropped(tile: TileNode, global_pos: Vector2) -> void:
+	var center: Vector2 = global_pos + TILE_SIZE / 2.0
+	var best_zone := ""
+	var best_r := -1
+	var best_c := -1
+	var best_dist := DROP_RADIUS
+	var zones: Array = ["table"] if tile.home_zone == "table" else ["table", "rack"]
+	for z in zones:
+		var grid := _grid_of(z)
+		var rows: int = TABLE_ROWS if z == "table" else RACK_ROWS
+		var cols: int = TABLE_COLS if z == "table" else RACK_COLS
+		for r in rows:
+			for c in cols:
+				var occupied = grid[r][c]
+				if occupied != null and occupied != tile:
+					continue
+				var slot_center: Vector2 = _slot_pos(z, r, c) + TILE_SIZE / 2.0
+				var d := center.distance_to(slot_center)
+				if d < best_dist:
+					best_dist = d
+					best_zone = z
+					best_r = r
+					best_c = c
+	if best_zone == "":
+		_animate_to_slot(tile, tile.zone, tile.row, tile.col) # 弹回原位
+		return
+	# 落位
+	_grid_of(tile.zone)[tile.row][tile.col] = null
+	_grid_of(best_zone)[best_r][best_c] = tile
+	tile.zone = best_zone
+	tile.row = best_r
+	tile.col = best_c
+	tile.set_new_highlight(best_zone == "table" and tile.home_zone == "rack")
+	_animate_to_slot(tile, best_zone, best_r, best_c)
+
+func _animate_to_slot(tile: TileNode, zone: String, r: int, c: int) -> void:
+	var tw := create_tween()
+	tw.tween_property(tile, "position", _slot_pos(zone, r, c), 0.12) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+# ---------- 回合结算 ----------
+func _on_end_turn() -> void:
+	if game_over or exchange_mode:
+		return
+	var groups := _parse_table_groups()
+	var checked: Array = []
+	var all_valid := true
+	for g in groups:
+		var defs: Array = []
+		for t in g:
+			defs.append(t.def)
+		var res := Rules.check_set(defs)
+		if not res.valid:
+			all_valid = false
+			for t in g:
+				t.flash_bad()
+		else:
+			checked.append({"tiles": g, "res": res})
+	if not all_valid:
+		_toast("桌面有不合法的牌组!")
+		return
+
+	# 每回合最多打出1个新对子(排水口, 不可无脑倒手牌)
+	var new_pairs := 0
+	for entry in checked:
+		if entry.res.kind == "pair":
+			for t in entry.tiles:
+				if t.is_new:
+					new_pairs += 1
+					break
+	if new_pairs > 1:
+		_toast("每回合最多只能打出1个对子")
+		return
+
+	var new_count := 0
+	for row in table_grid:
+		for t in row:
+			if t != null and t.is_new:
+				new_count += 1
+
+	var turn_gain := 0
+	if new_count == 0:
+		_toast("本回合未出牌, 摸1张")
+	else:
+		# chips = 新出牌面值之和 (对子不计chips)
+		var chips := 0
+		var has_new_run := false
+		for entry in checked:
+			if entry.res.kind == "pair":
+				continue
+			for i in entry.tiles.size():
+				if entry.tiles[i].is_new:
+					chips += int(entry.res.values[i])
+					if entry.res.kind == "run":
+						has_new_run = true
+		# R = 被实质重组的旧牌数(原组被拆/牌被挪; 仅被新牌扩充不算)
+		var reorg := 0
+		for entry in checked:
+			var uids: Array = []
+			for t in entry.tiles:
+				uids.append(t.uid)
+			uids.sort()
+			for t in entry.tiles:
+				if t.is_new or not start_groups.has(t.uid):
+					continue
+				var before: Array = start_groups[t.uid]
+				if uids == before:
+					continue
+				var expanded := true
+				for u in before: # 原组成员必须全保留
+					if not uids.has(u):
+						expanded = false
+						break
+				if expanded:
+					for t2 in entry.tiles: # 新增成员必须全是新牌
+						if not t2.is_new and not before.has(t2.uid):
+							expanded = false
+							break
+				if not expanded:
+					reorg += 1
+		var mult := 1.0 + REORG_MULT_STEP * reorg
+		var gained := int(round(chips * mult))
+		gained = relic_mgr.on_turn_scored(gained, {
+			"chips": chips, "mult": mult, "reorg": reorg, "has_run": has_new_run,
+		})
+		score += gained
+		turn_gain = gained
+		if reorg > 0:
+			_toast("%d × %.1f = %d %s  (重组%d张!)" % [chips, mult, gained, "伤害" if mode == "battle" else "分", reorg])
+		else:
+			_toast("+%d %s" % [gained, "伤害" if mode == "battle" else "分"])
+
+	# 锁定桌面牌
+	for row in table_grid:
+		for t in row:
+			if t != null:
+				t.home_zone = "table"
+				t.set_new_highlight(false)
+
+	# 空手奖励
+	if _rack_count() == 0:
+		if mode == "battle":
+			turn_gain += EMPTY_HAND_BONUS
+			_toast("手牌打空! 额外 %d 伤害, 补5张" % EMPTY_HAND_BONUS)
+		else:
+			score += EMPTY_HAND_BONUS
+			_toast("手牌打空! 奖励 +%d, 补5张" % EMPTY_HAND_BONUS)
+		for _i in 5:
+			_draw_to_rack()
+
+	if mode == "battle":
+		enemy_hp -= turn_gain
+		if enemy_hp <= 0:
+			enemy_hp = 0
+			_update_hud()
+			_show_floor_result(true)
+			return
+		var draws_b := relic_mgr.draw_count(1)
+		for _i in draws_b:
+			_draw_to_rack()
+		if not _ai_turn():
+			return # 我方被击败
+		turn += 1
+		_take_snapshot()
+		_update_hud()
+		return
+
+	if score >= _floor_target():
+		_update_hud()
+		_show_floor_result(true)
+		return
+
+	var draws := relic_mgr.draw_count(1)
+	for _i in draws:
+		_draw_to_rack()
+
+	if turn >= MAX_TURNS:
+		_update_hud()
+		_show_floor_result(false)
+		return
+
+	turn += 1
+	_take_snapshot()
+	_update_hud()
+
+# ---------- 对战: AI回合 ----------
+## 返回false表示我方被击败(对局已结束)
+func _ai_turn() -> bool:
+	var groups := _parse_table_groups()
+	var ginfo: Array = []
+	for g in groups:
+		var defs: Array = []
+		for t in g:
+			defs.append(t.def)
+		var res := Rules.check_set(defs)
+		ginfo.append({"kind": res.kind, "values": res.values, "defs": defs, "tiles": g})
+	var plan := AiOpponent.plan(enemy_hand, ginfo)
+	var dmg := 0
+	var played := 0
+	for s in plan.sets:
+		var spot := _find_table_space(s.size())
+		if spot.is_empty():
+			break
+		for i in s.size():
+			_place_ai_tile(s[i], spot.r, spot.c + i)
+		for d in s:
+			dmg += int(d.num)
+		played += s.size()
+		_remove_from_enemy_hand(s)
+	for e in plan.exts:
+		var g2: Dictionary = ginfo[e.gi]
+		var tiles: Array = g2.tiles
+		var r: int = tiles[0].row
+		var c0: int = tiles[0].col
+		var c1: int = tiles[tiles.size() - 1].col
+		var target_c: int = c0 - 1 if e.side == "left" else c1 + 1
+		var guard_c: int = target_c - 1 if e.side == "left" else target_c + 1
+		if target_c < 0 or target_c >= TABLE_COLS:
+			continue
+		if table_grid[r][target_c] != null:
+			continue
+		if guard_c >= 0 and guard_c < TABLE_COLS and table_grid[r][guard_c] != null:
+			continue
+		_place_ai_tile(e.def, r, target_c)
+		dmg += int(e.def.num)
+		played += 1
+		_remove_from_enemy_hand([e.def])
+	for p in plan.pairs:
+		var spot2 := _find_table_space(2)
+		if spot2.is_empty():
+			break
+		_place_ai_tile(p[0], spot2.r, spot2.c)
+		_place_ai_tile(p[1], spot2.r, spot2.c + 1)
+		played += 2
+		_remove_from_enemy_hand(p)
+	if deck.size() > 0:
+		enemy_hand.append(deck.pop_back())
+	if dmg > 0:
+		player_hp -= dmg
+		_toast("对手出牌, 对你造成 %d 伤害!" % dmg)
+	elif played > 0:
+		_toast("对手打出对子")
+	else:
+		_toast("对手摸牌")
+	if player_hp <= 0:
+		player_hp = 0
+		_update_hud()
+		_show_floor_result(false)
+		return false
+	return true
+
+## 在桌面找能放下n张连排的空位(两侧需留空/到边), 找不到返回空字典
+func _find_table_space(n: int) -> Dictionary:
+	for r in TABLE_ROWS:
+		for c in range(0, TABLE_COLS - n + 1):
+			var ok := true
+			if c > 0 and table_grid[r][c - 1] != null:
+				ok = false
+			if ok:
+				for i in n:
+					if table_grid[r][c + i] != null:
+						ok = false
+						break
+			if ok and c + n < TABLE_COLS and table_grid[r][c + n] != null:
+				ok = false
+			if ok:
+				return {"r": r, "c": c}
+	return {}
+
+func _place_ai_tile(def: Dictionary, r: int, c: int) -> void:
+	var tile := _create_tile(def, "table", r, c)
+	table_grid[r][c] = tile
+
+func _remove_from_enemy_hand(defs: Array) -> void:
+	for d in defs:
+		enemy_hand.erase(d)
+
+## 按行扫描, 连续相邻的牌为一组
+func _parse_table_groups() -> Array:
+	var groups: Array = []
+	for r in TABLE_ROWS:
+		var current: Array = []
+		for c in TABLE_COLS:
+			var t = table_grid[r][c]
+			if t != null:
+				current.append(t)
+			elif not current.is_empty():
+				groups.append(current)
+				current = []
+		if not current.is_empty():
+			groups.append(current)
+	return groups
+
+func _rack_count() -> int:
+	var n := 0
+	for row in rack_grid:
+		for t in row:
+			if t != null:
+				n += 1
+	return n
+
+# ---------- 换牌 ----------
+## 进入选择模式 -> 点选手牌 -> 再按确认: 选中牌洗回牌库, 抽回等量
+func _on_exchange() -> void:
+	if game_over:
+		return
+	if not exchange_mode:
+		if exchanges_left <= 0:
+			_toast("本层换牌次数已用完")
+			return
+		exchange_mode = true
+		btn_exchange.text = "确认"
+		for row in rack_grid:
+			for t in row:
+				if t != null:
+					t.select_mode = true
+		for row in table_grid:
+			for t in row:
+				if t != null:
+					t.draggable = false
+		_toast("点选要换掉的手牌, 再按「确认」(再按一次空选可取消)")
+		return
+	# 确认阶段
+	var picked: Array = []
+	for row in rack_grid:
+		for t in row:
+			if t != null and t.selected:
+				picked.append(t)
+	if picked.is_empty():
+		_exit_exchange_mode()
+		_toast("已取消换牌")
+		return
+	for t in picked:
+		deck.append(t.def)
+		rack_grid[t.row][t.col] = null
+		t.queue_free()
+	deck.shuffle()
+	var n: int = picked.size()
+	for _i in n:
+		_draw_to_rack()
+	exchanges_left -= 1
+	_exit_exchange_mode()
+	_take_snapshot() # 牌库已变, 撤回基准同步刷新
+	_update_hud()
+	_toast("换掉 %d 张" % n)
+
+func _exit_exchange_mode() -> void:
+	exchange_mode = false
+	btn_exchange.text = "换牌"
+	for row in rack_grid:
+		for t in row:
+			if t != null:
+				t.select_mode = false
+				t.set_selected(false)
+	for row in table_grid:
+		for t in row:
+			if t != null:
+				t.draggable = true
+
+func _on_tile_clicked(tile: TileNode) -> void:
+	if exchange_mode and tile.zone == "rack":
+		tile.set_selected(not tile.selected)
+
+# ---------- 整理 / 提示 / 撤回 ----------
+@warning_ignore("integer_division")
+func _on_sort() -> void:
+	if game_over or exchange_mode:
+		return
+	var tiles: Array = []
+	for row in rack_grid:
+		for t in row:
+			if t != null:
+				tiles.append(t)
+	if sort_by_color:
+		tiles.sort_custom(func (a, b):
+			if a.def.joker != b.def.joker:
+				return b.def.joker
+			if a.def.color != b.def.color:
+				return a.def.color < b.def.color
+			return a.def.num < b.def.num)
+	else:
+		tiles.sort_custom(func (a, b):
+			if a.def.joker != b.def.joker:
+				return b.def.joker
+			if a.def.num != b.def.num:
+				return a.def.num < b.def.num
+			return a.def.color < b.def.color)
+	sort_by_color = not sort_by_color
+	for r in RACK_ROWS:
+		for c in RACK_COLS:
+			rack_grid[r][c] = null
+	var i := 0
+	for t in tiles:
+		var r := i / RACK_COLS
+		var c := i % RACK_COLS
+		rack_grid[r][c] = t
+		t.zone = "rack"
+		t.row = r
+		t.col = c
+		_animate_to_slot(t, "rack", r, c)
+		i += 1
+
+func _on_hint() -> void:
+	if game_over or exchange_mode:
+		return
+	if hints_left <= 0:
+		_toast("提示次数已用完")
+		return
+	var hand_tiles: Array = []
+	for row in rack_grid:
+		for t in row:
+			if t != null:
+				hand_tiles.append(t)
+	var defs: Array = []
+	for t in hand_tiles:
+		defs.append(t.def)
+	var idx := Rules.find_hint(defs)
+	if idx.is_empty():
+		_toast("手牌中没有可直接组成的牌组")
+		return
+	hints_left -= 1
+	lbl_hint_count.text = str(hints_left)
+	for i in idx:
+		hand_tiles[i].flash_hint()
+
+func _on_undo() -> void:
+	if game_over or exchange_mode:
+		return
+	_restore_snapshot()
+	_toast("已撤回到回合开始")
+
+func _take_snapshot() -> void:
+	snapshot = []
+	for zone in ["table", "rack"]:
+		var grid := _grid_of(zone)
+		for r in grid.size():
+			for c in grid[r].size():
+				var t = grid[r][c]
+				if t != null:
+					snapshot.append({"def": t.def, "zone": zone, "row": r, "col": c,
+						"uid": t.uid, "is_new": t.is_new})
+	# 记录回合开始时每张桌面牌所属牌组的成员(重组判定基准)
+	start_groups = {}
+	for g in _parse_table_groups():
+		var uids: Array = []
+		for t in g:
+			uids.append(t.uid)
+		uids.sort()
+		for t in g:
+			start_groups[t.uid] = uids
+
+func _restore_snapshot() -> void:
+	for child in tiles_layer.get_children():
+		child.queue_free()
+	for r in TABLE_ROWS:
+		for c in TABLE_COLS:
+			table_grid[r][c] = null
+	for r in RACK_ROWS:
+		for c in RACK_COLS:
+			rack_grid[r][c] = null
+	for rec in snapshot:
+		var tile := _create_tile(rec.def, rec.zone, rec.row, rec.col, rec.uid)
+		_grid_of(rec.zone)[rec.row][rec.col] = tile
+		if rec.get("is_new", false):
+			tile.home_zone = "rack"
+			tile.set_new_highlight(true)
+
+# ---------- HUD / 结算 ----------
+func _update_hud() -> void:
+	if mode == "battle":
+		lbl_turn.text = "第%d层 回合%d" % [floor_num, turn]
+		lbl_score.text = "我方 %d" % player_hp
+		lbl_target.text = "敌方 %d" % enemy_hp
+		lbl_deck.text = "牌库 %d · 敌手牌 %d" % [deck.size(), enemy_hand.size()]
+	else:
+		lbl_turn.text = "第%d层 %d/%d" % [floor_num, turn, MAX_TURNS]
+		lbl_score.text = "得分 %d" % score
+		lbl_target.text = "目标 %d" % _floor_target()
+		lbl_deck.text = "牌库 %d" % deck.size()
+	lbl_hint_count.text = str(hints_left)
+	lbl_ex_count.text = str(exchanges_left)
+
+func _toast(msg: String) -> void:
+	toast_label.text = msg
+	toast_label.modulate = Color.WHITE
+	var tw := create_tween()
+	tw.tween_interval(1.4)
+	tw.tween_property(toast_label, "modulate:a", 0.0, 0.5)
+
+func _show_floor_result(win: bool) -> void:
+	game_over = true
+	for child in tiles_layer.get_children():
+		if child is TileNode:
+			(child as TileNode).draggable = false
+	var cleared_all := win and floor_num >= FLOOR_TARGETS.size()
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
+	overlay_nodes.append(dim)
+	var panel := _rounded_panel(Rect2(80, 420, 560, 400), Color("#fdf6e8"), 24)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(panel)
+	overlay_nodes.append(panel)
+	var win_word := "击败对手!" if mode == "battle" else "第%d层 过关!" % floor_num
+	var title_text := "通关!" if cleared_all else (win_word if win else "止步第%d层" % floor_num)
+	var title := _make_label(title_text, 52, COL_TOPBAR if win else Color("#c0392b"))
+	title.size = Vector2(560, 80)
+	title.position = Vector2(0, 50)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(title)
+	var detail_text := "我方体力 %d · 敌方 %d" % [player_hp, enemy_hp] if mode == "battle" \
+		else "得分 %d / %d" % [score, _floor_target()]
+	var detail := _make_label(detail_text, 34, Color("#5b3a14"))
+	detail.size = Vector2(560, 50)
+	detail.position = Vector2(0, 160)
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(detail)
+	if win and not cleared_all:
+		var btn := _make_button("下一层", "green", Rect2(155, 260, 250, 84))
+		btn.pressed.connect(func ():
+			floor_num += 1
+			_start_floor())
+		panel.add_child(btn)
+	else:
+		var btn := _make_button("重新挑战", "green", Rect2(155, 260, 250, 84))
+		btn.pressed.connect(func ():
+			floor_num = 1
+			_start_floor())
+		panel.add_child(btn)

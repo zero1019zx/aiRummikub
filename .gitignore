@@ -1,0 +1,11 @@
+# Godot 缓存
+game/.godot/
+
+# 本地构建产物 (CI 自动构建, 不入库)
+build/
+
+# 本地HTTPS证书
+.cert/
+
+# 系统文件
+.DS_Store

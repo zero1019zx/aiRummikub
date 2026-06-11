@@ -1,0 +1,54 @@
+name: Build & Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GODOT_VERSION: 4.6-stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Godot + export templates
+        run: |
+          curl -sL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" godot
+          curl -sL -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          TPL_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION/-stable/.stable}"
+          mkdir -p "$TPL_DIR"
+          unzip -q templates.tpz -d /tmp/templates
+          mv /tmp/templates/templates/* "$TPL_DIR/"
+
+      - name: Import project resources
+        run: ./godot --headless --path game --import || true
+
+      - name: Export Web build
+        run: |
+          mkdir -p build/web
+          ./godot --headless --path game --export-release "Web" ../build/web/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
