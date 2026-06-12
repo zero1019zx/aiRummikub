@@ -682,6 +682,10 @@ func _slot_pos(zone: String, r: int, c: int) -> Vector2:
 func _grid_of(zone: String) -> Array:
 	return table_grid if zone == "table" else rack_grid
 
+## 牌面值指纹(重组判定用): 同色同数的两份拷贝视为同一张
+func _val_key(d: Dictionary) -> int:
+	return 900 if d.joker else int(d.color) * 100 + int(d.num)
+
 # ---------- 拖拽 ----------
 func _on_tile_picked(tile: TileNode) -> void:
 	tiles_layer.move_child(tile, tiles_layer.get_child_count() - 1)
@@ -788,28 +792,41 @@ func _on_end_turn() -> void:
 				defs2.append(t.def)
 			chips += relic_mgr.chips_for_set(entry.res.kind, entry.res.values, flags, defs2)
 		# R = 被实质重组的旧牌数(原组被拆/牌被挪; 仅被新牌扩充不算)
+		# 按"面值多重集"对比: 同名牌互换不计, 防刷分
 		var reorg := 0
 		var enemy_reorg := 0
 		var reorg_tiles: Array = []
 		for entry in checked:
-			var uids: Array = []
+			var vals: Array = []
+			var new_val_counts := {}
 			for t in entry.tiles:
-				uids.append(t.uid)
-			uids.sort()
+				var vk := _val_key(t.def)
+				vals.append(vk)
+				if t.is_new:
+					new_val_counts[vk] = int(new_val_counts.get(vk, 0)) + 1
+			vals.sort()
+			var cur_counts := {}
+			for v in vals:
+				cur_counts[v] = int(cur_counts.get(v, 0)) + 1
 			for t in entry.tiles:
 				if t.is_new or not start_groups.has(t.uid):
 					continue
 				var before: Array = start_groups[t.uid]
-				if uids == before:
+				if vals == before:
 					continue
+				# 扩充豁免: 原组面值全保留, 且新增面值都来自本回合新牌
+				var before_counts := {}
+				for v in before:
+					before_counts[v] = int(before_counts.get(v, 0)) + 1
 				var expanded := true
-				for u in before: # 原组成员必须全保留
-					if not uids.has(u):
+				for v in before_counts:
+					if int(cur_counts.get(v, 0)) < int(before_counts[v]):
 						expanded = false
 						break
 				if expanded:
-					for t2 in entry.tiles: # 新增成员必须全是新牌
-						if not t2.is_new and not before.has(t2.uid):
+					for v in cur_counts:
+						var extra: int = int(cur_counts[v]) - int(before_counts.get(v, 0))
+						if extra > int(new_val_counts.get(v, 0)):
 							expanded = false
 							break
 				if not expanded:
@@ -1209,15 +1226,16 @@ func _take_snapshot() -> void:
 				if t != null:
 					snapshot.append({"def": t.def, "zone": zone, "row": r, "col": c,
 						"uid": t.uid, "is_new": t.is_new, "owner": t.owner_tag})
-	# 记录回合开始时每张桌面牌所属牌组的成员(重组判定基准)
+	# 记录回合开始时每张桌面牌所属牌组的"面值多重集"(重组判定基准)
+	# 用面值而非实例id对比, 防止"两张相同牌互换牌组"刷重组数的漏洞
 	start_groups = {}
 	for g in _parse_table_groups():
-		var uids: Array = []
+		var vals: Array = []
 		for t in g:
-			uids.append(t.uid)
-		uids.sort()
+			vals.append(_val_key(t.def))
+		vals.sort()
 		for t in g:
-			start_groups[t.uid] = uids
+			start_groups[t.uid] = vals
 
 func _restore_snapshot() -> void:
 	for child in tiles_layer.get_children():
