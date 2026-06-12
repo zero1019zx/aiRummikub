@@ -27,6 +27,18 @@ var uid := -1
 var _overlay_style: StyleBoxFlat
 var _dragging := false
 var _drag_off := Vector2.ZERO
+var _guide_tw: Tween
+
+## 教程引导: 持续呼吸缩放直到关闭
+func set_guide(on: bool) -> void:
+	if _guide_tw != null:
+		_guide_tw.kill()
+		_guide_tw = null
+		scale = Vector2.ONE
+	if on:
+		_guide_tw = create_tween().set_loops()
+		_guide_tw.tween_property(self, "scale", Vector2(1.1, 1.1), 0.4)
+		_guide_tw.tween_property(self, "scale", Vector2.ONE, 0.4)
 
 func setup(d: Dictionary, size_px: Vector2) -> void:
 	def = d
