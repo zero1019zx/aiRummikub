@@ -20,7 +20,8 @@ const MAX_TURNS := 5
 const EMPTY_HAND_BONUS := 20
 const HINTS_TOTAL := 3
 const EXCHANGES_PER_FLOOR := 2
-const FLOOR_TARGETS: Array[int] = [40, 60, 85, 125, 180, 260, 380, 550]
+const FLOOR_TARGETS: Array[int] = [40, 60, 85, 125, 180, 260, 380, 550] # 分数挑战目标
+const BATTLE_HP: Array[int] = [40, 55, 75, 100, 135, 180, 240, 320] # 对战敌方体力(难度主要靠AI变强)
 const SHOP_REROLL_COST := 2
 const PLAYER_MAX_HP := 60 # 对战模式我方体力(每层重置); 敌方体力=该层目标分
 
@@ -155,6 +156,21 @@ func _reset_run() -> void:
 func _floor_target() -> int:
 	return FLOOR_TARGETS[min(floor_num, FLOOR_TARGETS.size()) - 1]
 
+func _battle_max() -> int:
+	if mode == "tutorial":
+		return 75
+	return BATTLE_HP[min(floor_num, BATTLE_HP.size()) - 1]
+
+## 分层AI人格
+func _ai_cfg() -> Dictionary:
+	if floor_num <= 2:
+		return {"name": "杂兵", "draws": 1, "pulls": false, "joker": false}
+	elif floor_num <= 4:
+		return {"name": "老手", "draws": 2, "pulls": true, "joker": false}
+	elif floor_num <= 6:
+		return {"name": "精英", "draws": 2, "pulls": true, "joker": true}
+	return {"name": "魔王", "draws": 3, "pulls": true, "joker": true}
+
 # ============================================================
 # 静态UI搭建
 # ============================================================
@@ -220,9 +236,9 @@ func _build_static_ui() -> void:
 	ebox.add_child(eavatar)
 	ebar = _make_hp_bar(Rect2(96, 14, 168, 38), Color("#e84b3c"))
 	ebox.add_child(ebar.root)
-	enemy_action = _make_label("等待出牌…", 18, Color("#ffd9c9"))
-	enemy_action.position = Vector2(98, 60)
-	enemy_action.size = Vector2(166, 50)
+	enemy_action = _make_label("等待出牌…", 15, Color("#ffd9c9"))
+	enemy_action.position = Vector2(98, 56)
+	enemy_action.size = Vector2(168, 58)
 	enemy_action.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ebox.add_child(enemy_action)
 	# 进入对战层之前先隐藏
@@ -635,7 +651,7 @@ func _start_floor() -> void:
 			_draw_to_rack()
 		if mode == "battle":
 			player_hp = PLAYER_MAX_HP
-			enemy_hp = _floor_target()
+			enemy_hp = _battle_max()
 			enemy_hand = []
 			for _i in HAND_START:
 				if deck.size() > 0:
@@ -938,9 +954,53 @@ func _ai_turn() -> bool:
 			defs.append(t.def)
 		var res := Rules.check_set(defs)
 		ginfo.append({"kind": res.kind, "values": res.values, "defs": defs, "tiles": g})
-	var plan := AiOpponent.plan(enemy_hand, ginfo)
+	var cfg := _ai_cfg()
+	var plan := AiOpponent.plan(enemy_hand, ginfo, cfg)
 	var dmg := 0
 	var played := 0
+	var r_ai := 0
+	var pulled_gis := {}
+	# 拆组突袭: 从桌面组拉牌 + 手牌2张组新顺/刻 (AI同样吃 chips×倍率)
+	for p in plan.pulls:
+		var spot_p := _find_table_space(3)
+		if spot_p.is_empty():
+			break
+		var g_src: Dictionary = ginfo[p.gi]
+		var src_tiles: Array = g_src.tiles
+		var pulled: TileNode = null
+		for t in src_tiles:
+			if t.def == p.take_def:
+				pulled = t
+				break
+		if pulled == null:
+			continue
+		pulled_gis[p.gi] = true
+		r_ai += src_tiles.size()
+		for t in src_tiles:
+			t.flash_color(Color("#ff7a6b"))
+		# 抽走 + 行内压缩补位
+		table_grid[pulled.row][pulled.col] = null
+		for t in src_tiles:
+			if t != pulled and t.col > pulled.col:
+				table_grid[t.row][t.col] = null
+				t.col -= 1
+				table_grid[t.row][t.col] = t
+				_animate_to_slot(t, "table", t.row, t.col)
+		# 新组: 按数字排序放置
+		var members: Array = [p.take_def, p.new_defs[0], p.new_defs[1]]
+		members.sort_custom(func (x, y): return x.num < y.num)
+		for i in members.size():
+			var d2: Dictionary = members[i]
+			if d2 == p.take_def:
+				pulled.row = spot_p.r
+				pulled.col = spot_p.c + i
+				table_grid[pulled.row][pulled.col] = pulled
+				_animate_to_slot(pulled, "table", pulled.row, pulled.col)
+			else:
+				await _place_ai_tile(d2, spot_p.r, spot_p.c + i)
+				dmg += int(d2.num)
+		played += 2
+		_remove_from_enemy_hand(p.new_defs)
 	for s in plan.sets:
 		var spot := _find_table_space(s.size())
 		if spot.is_empty():
@@ -952,6 +1012,8 @@ func _ai_turn() -> bool:
 		played += s.size()
 		_remove_from_enemy_hand(s)
 	for e in plan.exts:
+		if pulled_gis.has(e.gi):
+			continue # 该组已被拆, 端值失效
 		var g2: Dictionary = ginfo[e.gi]
 		var tiles: Array = g2.tiles
 		var r: int = tiles[0].row
@@ -989,20 +1051,39 @@ func _ai_turn() -> bool:
 			if res3.valid:
 				checked2.append({"tiles": g3, "res": res3})
 		_auto_layout_table(checked2)
-	if deck.size() > 0:
-		if relic_mgr.enemy_draw_blocked():
-			_toast("烟雾弹生效, 敌方摸牌落空!")
+	for _di in int(cfg.draws):
+		if deck.size() > 0:
+			if relic_mgr.enemy_draw_blocked():
+				_toast("烟雾弹生效, 敌方摸牌落空!")
+			else:
+				enemy_hand.append(deck.pop_back())
+	# 伤害 = chips × (1 + 0.5×AI重组数), 与玩家同一公式
+	var mult_ai := 1.0 + 0.5 * r_ai
+	var dmg_total := int(round(dmg * mult_ai))
+	dmg_total = relic_mgr.modify_enemy_damage(dmg_total)
+	if dmg_total > 0:
+		player_hp -= dmg_total
+		if r_ai > 0:
+			enemy_action.text = "重组突袭! %d×%.1f=%d伤害!" % [dmg, mult_ai, dmg_total]
+			_show_score_pop("敌方 %d × %.1f = %d!" % [dmg, mult_ai, dmg_total])
 		else:
-			enemy_hand.append(deck.pop_back())
-	dmg = relic_mgr.modify_enemy_damage(dmg)
-	if dmg > 0:
-		player_hp -= dmg
-		enemy_action.text = "出牌%d张, 造成%d伤害!" % [played, dmg]
+			enemy_action.text = "出牌%d张, 造成%d伤害!" % [played, dmg_total]
 		_shake(pbar.root)
 	elif played > 0:
 		enemy_action.text = "打出对子, 蓄势中"
 	else:
 		enemy_action.text = "无牌可出, 摸牌休整"
+	# 意图预告(按其手牌预演下回合)
+	var groups3 := _parse_table_groups()
+	var ginfo3: Array = []
+	for g4 in groups3:
+		var defs4: Array = []
+		for t in g4:
+			defs4.append(t.def)
+		var res4 := Rules.check_set(defs4)
+		if res4.valid:
+			ginfo3.append({"kind": res4.kind, "values": res4.values, "defs": defs4, "tiles": g4})
+	enemy_action.text += "\n" + AiOpponent.intent_text(enemy_hand, ginfo3, cfg)
 	_update_hud()
 	if player_hp <= 0:
 		player_hp = 0
@@ -1259,7 +1340,8 @@ func _update_hud() -> void:
 	if mode != "score":
 		lbl_turn_b.text = "第%d层 · 回合%d" % [floor_num, turn]
 		_update_bar(pbar, "我方", player_hp, PLAYER_MAX_HP)
-		_update_bar(ebar, "对手", enemy_hp, 75 if mode == "tutorial" else _floor_target())
+		var ename: String = "对手" if mode == "tutorial" else String(_ai_cfg().name)
+		_update_bar(ebar, ename, enemy_hp, _battle_max())
 		lbl_deck.text = "牌库 %d · 敌手牌 %d · 金币 %d" % [deck.size(), enemy_hand.size(), gold]
 	else:
 		lbl_turn.text = "第%d层 %d/%d" % [floor_num, turn, MAX_TURNS]
