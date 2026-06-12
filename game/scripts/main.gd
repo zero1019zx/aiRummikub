@@ -20,8 +20,8 @@ const MAX_TURNS := 5
 const EMPTY_HAND_BONUS := 20
 const HINTS_TOTAL := 3
 const EXCHANGES_PER_FLOOR := 2
-const REORG_MULT_STEP := 0.5 # 每张被重组的旧牌 +0.5x
 const FLOOR_TARGETS: Array[int] = [40, 60, 85, 125, 180, 260, 380, 550]
+const SHOP_REROLL_COST := 2
 const PLAYER_MAX_HP := 60 # 对战模式我方体力(每层重置); 敌方体力=该层目标分
 
 # ---------- 配色 (对齐视觉设定图) ----------
@@ -60,6 +60,9 @@ var mode := "score" # "score" 分数挑战 / "battle" 对战原型
 var player_hp := PLAYER_MAX_HP
 var enemy_hp := 0
 var enemy_hand: Array = []
+var gold := 0
+var next_chips_bonus := 0 # 回收商等遗物存入下回合的chips
+var relic_bar: Control
 
 # ---------- UI 引用 ----------
 var tiles_layer: Control
@@ -97,15 +100,24 @@ func _show_mode_select() -> void:
 	var b1 := _make_button("分数挑战", "green", Rect2(130, 160, 300, 90))
 	b1.pressed.connect(func ():
 		mode = "score"
+		_reset_run()
 		floor_num = 1
 		_start_floor())
 	panel.add_child(b1)
 	var b2 := _make_button("对战原型", "purple", Rect2(130, 290, 300, 90))
 	b2.pressed.connect(func ():
 		mode = "battle"
+		_reset_run()
 		floor_num = 1
 		_start_floor())
 	panel.add_child(b2)
+
+## 新一轮run: 清空跨层成长状态(金币/遗物)
+func _reset_run() -> void:
+	gold = 0
+	next_chips_bonus = 0
+	relic_mgr = RelicManager.new()
+	_refresh_relic_bar()
 
 func _floor_target() -> int:
 	return FLOOR_TARGETS[min(floor_num, FLOOR_TARGETS.size()) - 1]
@@ -160,6 +172,12 @@ func _build_static_ui() -> void:
 	lbl_deck.add_theme_color_override("font_outline_color", Color("#2e6b3e"))
 	lbl_deck.add_theme_constant_override("outline_size", 4)
 	add_child(lbl_deck)
+
+	# 遗物图标条(桌沿区, 点击图标看说明)
+	relic_bar = Control.new()
+	relic_bar.position = Vector2(16, 134)
+	relic_bar.size = Vector2(688, 44)
+	add_child(relic_bar)
 
 	# --- 桌面格位 (极淡的暗块, 仅作落位指引) ---
 	for r in TABLE_ROWS:
@@ -449,8 +467,8 @@ func _on_end_turn() -> void:
 				if t.is_new:
 					new_pairs += 1
 					break
-	if new_pairs > 1:
-		_toast("每回合最多只能打出1个对子")
+	if new_pairs > relic_mgr.pair_limit():
+		_toast("每回合最多只能打出%d个对子" % relic_mgr.pair_limit())
 		return
 
 	var new_count := 0
@@ -463,19 +481,19 @@ func _on_end_turn() -> void:
 	if new_count == 0:
 		_toast("本回合未出牌, 摸1张")
 	else:
-		# chips = 新出牌面值之和 (对子不计chips)
-		var chips := 0
-		var has_new_run := false
+		# chips: 各牌组新牌面值经遗物修正后求和 (+回收商存入的返还)
+		var chips := next_chips_bonus
+		next_chips_bonus = 0
 		for entry in checked:
-			if entry.res.kind == "pair":
-				continue
-			for i in entry.tiles.size():
-				if entry.tiles[i].is_new:
-					chips += int(entry.res.values[i])
-					if entry.res.kind == "run":
-						has_new_run = true
+			var flags: Array = []
+			var defs2: Array = []
+			for t in entry.tiles:
+				flags.append(t.is_new)
+				defs2.append(t.def)
+			chips += relic_mgr.chips_for_set(entry.res.kind, entry.res.values, flags, defs2)
 		# R = 被实质重组的旧牌数(原组被拆/牌被挪; 仅被新牌扩充不算)
 		var reorg := 0
+		var enemy_reorg := 0
 		for entry in checked:
 			var uids: Array = []
 			for t in entry.tiles:
@@ -499,11 +517,10 @@ func _on_end_turn() -> void:
 							break
 				if not expanded:
 					reorg += 1
-		var mult := 1.0 + REORG_MULT_STEP * reorg
+					if t.owner_tag == "enemy":
+						enemy_reorg += 1
+		var mult := 1.0 + relic_mgr.mult_step() * reorg + relic_mgr.enemy_reorg_bonus(enemy_reorg)
 		var gained := int(round(chips * mult))
-		gained = relic_mgr.on_turn_scored(gained, {
-			"chips": chips, "mult": mult, "reorg": reorg, "has_run": has_new_run,
-		})
 		score += gained
 		turn_gain = gained
 		if reorg > 0:
@@ -531,6 +548,10 @@ func _on_end_turn() -> void:
 
 	if mode == "battle":
 		enemy_hp -= turn_gain
+		if turn_gain > 0:
+			var heal := relic_mgr.lifesteal(turn_gain)
+			if heal > 0:
+				player_hp = min(PLAYER_MAX_HP, player_hp + heal)
 		if enemy_hp <= 0:
 			enemy_hp = 0
 			_update_hud()
@@ -615,7 +636,11 @@ func _ai_turn() -> bool:
 		played += 2
 		_remove_from_enemy_hand(p)
 	if deck.size() > 0:
-		enemy_hand.append(deck.pop_back())
+		if relic_mgr.enemy_draw_blocked():
+			_toast("烟雾弹生效, 敌方摸牌落空!")
+		else:
+			enemy_hand.append(deck.pop_back())
+	dmg = relic_mgr.modify_enemy_damage(dmg)
 	if dmg > 0:
 		player_hp -= dmg
 		_toast("对手出牌, 对你造成 %d 伤害!" % dmg)
@@ -650,6 +675,7 @@ func _find_table_space(n: int) -> Dictionary:
 
 func _place_ai_tile(def: Dictionary, r: int, c: int) -> void:
 	var tile := _create_tile(def, "table", r, c)
+	tile.owner_tag = "enemy"
 	table_grid[r][c] = tile
 
 func _remove_from_enemy_hand(defs: Array) -> void:
@@ -711,11 +737,17 @@ func _on_exchange() -> void:
 		_exit_exchange_mode()
 		_toast("已取消换牌")
 		return
+	var picked_defs: Array = []
 	for t in picked:
+		picked_defs.append(t.def)
 		deck.append(t.def)
 		rack_grid[t.row][t.col] = null
 		t.queue_free()
 	deck.shuffle()
+	var refund := relic_mgr.exchange_refund(picked_defs)
+	if refund > 0:
+		next_chips_bonus += refund
+		_toast("回收商: 下回合chips+%d" % refund)
 	var n: int = picked.size()
 	for _i in n:
 		_draw_to_rack()
@@ -819,7 +851,7 @@ func _take_snapshot() -> void:
 				var t = grid[r][c]
 				if t != null:
 					snapshot.append({"def": t.def, "zone": zone, "row": r, "col": c,
-						"uid": t.uid, "is_new": t.is_new})
+						"uid": t.uid, "is_new": t.is_new, "owner": t.owner_tag})
 	# 记录回合开始时每张桌面牌所属牌组的成员(重组判定基准)
 	start_groups = {}
 	for g in _parse_table_groups():
@@ -842,6 +874,7 @@ func _restore_snapshot() -> void:
 	for rec in snapshot:
 		var tile := _create_tile(rec.def, rec.zone, rec.row, rec.col, rec.uid)
 		_grid_of(rec.zone)[rec.row][rec.col] = tile
+		tile.owner_tag = rec.get("owner", "player")
 		if rec.get("is_new", false):
 			tile.home_zone = "rack"
 			tile.set_new_highlight(true)
@@ -852,7 +885,7 @@ func _update_hud() -> void:
 		lbl_turn.text = "第%d层 回合%d" % [floor_num, turn]
 		lbl_score.text = "我方 %d" % player_hp
 		lbl_target.text = "敌方 %d" % enemy_hp
-		lbl_deck.text = "牌库 %d · 敌手牌 %d" % [deck.size(), enemy_hand.size()]
+		lbl_deck.text = "牌库 %d · 敌手牌 %d · 金币 %d" % [deck.size(), enemy_hand.size(), gold]
 	else:
 		lbl_turn.text = "第%d层 %d/%d" % [floor_num, turn, MAX_TURNS]
 		lbl_score.text = "得分 %d" % score
@@ -860,6 +893,125 @@ func _update_hud() -> void:
 		lbl_deck.text = "牌库 %d" % deck.size()
 	lbl_hint_count.text = str(hints_left)
 	lbl_ex_count.text = str(exchanges_left)
+
+# ---------- 层间商店 ----------
+var _shop_cards_box: Control
+var _shop_gold_lbl: Label
+
+func _show_shop() -> void:
+	for n in overlay_nodes:
+		n.queue_free()
+	overlay_nodes = []
+	game_over = true
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
+	overlay_nodes.append(dim)
+	var panel := _rounded_panel(Rect2(40, 140, 640, 1000), Color("#fdf6e8"), 24)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(panel)
+	overlay_nodes.append(panel)
+	var title := _make_label("商店", 44, Color("#6b4a23"))
+	title.size = Vector2(640, 60)
+	title.position = Vector2(0, 30)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(title)
+	_shop_gold_lbl = _make_label("金币 %d" % gold, 30, Color("#b8860b"))
+	_shop_gold_lbl.size = Vector2(640, 40)
+	_shop_gold_lbl.position = Vector2(0, 96)
+	_shop_gold_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(_shop_gold_lbl)
+	_shop_cards_box = Control.new()
+	_shop_cards_box.position = Vector2(40, 160)
+	_shop_cards_box.size = Vector2(560, 560)
+	panel.add_child(_shop_cards_box)
+	_shop_build_cards()
+	var refresh_btn := _make_button("刷新 %d金" % SHOP_REROLL_COST, "blue", Rect2(60, 770, 230, 84))
+	refresh_btn.add_theme_font_size_override("font_size", 28)
+	refresh_btn.pressed.connect(func ():
+		if gold < SHOP_REROLL_COST:
+			_toast("金币不足")
+			return
+		gold -= SHOP_REROLL_COST
+		_shop_gold_lbl.text = "金币 %d" % gold
+		_update_hud()
+		_shop_build_cards())
+	panel.add_child(refresh_btn)
+	var next_btn := _make_button("下一层", "green", Rect2(330, 770, 250, 84))
+	next_btn.pressed.connect(func ():
+		floor_num += 1
+		_start_floor())
+	panel.add_child(next_btn)
+
+func _shop_build_cards() -> void:
+	for c in _shop_cards_box.get_children():
+		c.queue_free()
+	var offers := relic_mgr.shop_offers(3)
+	if offers.is_empty():
+		var empty := _make_label("遗物已售罄", 28, Color("#8a6a3f"))
+		empty.position = Vector2(180, 240)
+		_shop_cards_box.add_child(empty)
+		return
+	var y := 0.0
+	for id in offers:
+		var d: Dictionary = RelicManager.DEFS[id]
+		var card := _rounded_panel(Rect2(0, y, 560, 160), Color("#f3e7cd"), 16)
+		card.mouse_filter = Control.MOUSE_FILTER_STOP
+		_shop_cards_box.add_child(card)
+		var nm := _make_label("%s  [%s]" % [d.name, d.short], 28, Color("#6b4a23"))
+		nm.position = Vector2(24, 16)
+		card.add_child(nm)
+		var ds := _make_label(d.desc, 20, Color("#8a6a3f"))
+		ds.position = Vector2(24, 62)
+		ds.size = Vector2(380, 86)
+		ds.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		card.add_child(ds)
+		var buy := _make_button("%d金" % d.price, "green", Rect2(424, 38, 112, 84))
+		buy.add_theme_font_size_override("font_size", 28)
+		var rid: String = id
+		buy.pressed.connect(func ():
+			var price: int = RelicManager.DEFS[rid].price
+			if gold < price:
+				_toast("金币不足")
+				return
+			gold -= price
+			relic_mgr.add(rid)
+			_refresh_relic_bar()
+			_shop_gold_lbl.text = "金币 %d" % gold
+			_update_hud()
+			buy.disabled = true
+			buy.text = "已购")
+		card.add_child(buy)
+		y += 184.0
+
+func _refresh_relic_bar() -> void:
+	for child in relic_bar.get_children():
+		child.queue_free()
+	var x := 0.0
+	for id in relic_mgr.owned:
+		var def: Dictionary = RelicManager.DEFS[id]
+		var b := Button.new()
+		b.text = def.short
+		b.position = Vector2(x, 0)
+		b.size = Vector2(40, 40)
+		if ui_font != null:
+			b.add_theme_font_override("font", ui_font)
+		b.add_theme_font_size_override("font_size", 22)
+		b.add_theme_color_override("font_color", Color("#6b4a23"))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("#fdf6e8")
+		sb.set_corner_radius_all(20)
+		sb.border_width_bottom = 4
+		sb.border_color = Color("#d9bf94")
+		b.add_theme_stylebox_override("normal", sb)
+		b.add_theme_stylebox_override("hover", sb)
+		b.add_theme_stylebox_override("pressed", sb)
+		var rid: String = id
+		b.pressed.connect(func ():
+			_toast("%s: %s" % [RelicManager.DEFS[rid].name, RelicManager.DEFS[rid].desc]))
+		relic_bar.add_child(b)
+		x += 46.0
 
 func _toast(msg: String) -> void:
 	toast_label.text = msg
@@ -898,14 +1050,32 @@ func _show_floor_result(win: bool) -> void:
 	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(detail)
 	if win and not cleared_all:
-		var btn := _make_button("下一层", "green", Rect2(155, 260, 250, 84))
-		btn.pressed.connect(func ():
-			floor_num += 1
-			_start_floor())
-		panel.add_child(btn)
+		if mode == "battle":
+			# 过层金币: 5 + 剩余体力/10 + 利息
+			var gain := 5 + int(player_hp / 10.0)
+			var bonus := relic_mgr.interest(gold)
+			gold += gain + bonus
+			var gtext := "金币 +%d (共 %d)" % [gain + bonus, gold]
+			if bonus > 0:
+				gtext = "金币 +%d 含利息%d (共 %d)" % [gain + bonus, bonus, gold]
+			var gold_lbl := _make_label(gtext, 26, Color("#b8860b"))
+			gold_lbl.size = Vector2(560, 40)
+			gold_lbl.position = Vector2(0, 208)
+			gold_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			panel.add_child(gold_lbl)
+			var btn := _make_button("进入商店", "yellow", Rect2(155, 264, 250, 84))
+			btn.pressed.connect(_show_shop)
+			panel.add_child(btn)
+		else:
+			var btn := _make_button("下一层", "green", Rect2(155, 260, 250, 84))
+			btn.pressed.connect(func ():
+				floor_num += 1
+				_start_floor())
+			panel.add_child(btn)
 	else:
 		var btn := _make_button("重新挑战", "green", Rect2(155, 260, 250, 84))
 		btn.pressed.connect(func ():
+			_reset_run()
 			floor_num = 1
 			_start_floor())
 		panel.add_child(btn)

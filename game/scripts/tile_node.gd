@@ -20,6 +20,7 @@ var is_new := false # 本回合从手牌打到桌面
 var draggable := true
 var select_mode := false # 换牌选择模式: 点击切换选中, 不可拖拽
 var selected := false
+var owner_tag := "player" # 谁打出的: "player"/"enemy" (夺地旗等遗物用)
 ## 每张牌全局唯一ID(快照/重组判定用, 撤回重建时保留)
 var uid := -1
 
