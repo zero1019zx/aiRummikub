@@ -92,6 +92,15 @@ func flash_bad() -> void:
 		_overlay_style.border_color = orig
 		_overlay_style.set_border_width_all(orig_w))
 
+## 临时染色描边(伤害结算高亮等), 1秒后恢复
+func flash_color(col: Color) -> void:
+	_overlay_style.border_color = col
+	_overlay_style.set_border_width_all(4)
+	var tw := create_tween()
+	tw.tween_interval(1.1)
+	tw.tween_callback(func ():
+		set_new_highlight(is_new))
+
 func flash_hint() -> void:
 	var tw := create_tween()
 	tw.tween_property(self, "scale", Vector2(1.12, 1.12), 0.15)
