@@ -842,9 +842,9 @@ func _on_end_turn() -> void:
 	# 自动整理桌面: 组间留空, 顺子留头尾呼吸位, 对子留补位
 	_auto_layout_table(checked)
 
-	# 空手奖励
+	# 空手奖励 (对战/教程计入伤害, 分数模式计入得分)
 	if _rack_count() == 0:
-		if mode == "battle":
+		if mode != "score":
 			turn_gain += EMPTY_HAND_BONUS
 			_toast("手牌打空! 额外 %d 伤害, 补5张" % EMPTY_HAND_BONUS)
 		else:
@@ -1532,6 +1532,12 @@ func _tut_after_submit() -> bool:
 		tut_step = 9
 		_tut_set_guides(_rack_tiles_matching(0, 0, true) + _rack_tiles_matching(1, 7))
 		_tut_show("终结一击: 鬼牌★可以充当任何牌。把 ★ 和 蓝7 接到蓝色顺子后面(★当作蓝6), 打空手牌还有额外+20伤害, 击杀对手!", false)
+	elif tut_step == 9:
+		# 兜底: 步骤9提交后理应击杀; 若数值意外未达成, 直接结束教程防卡死
+		enemy_hp = 0
+		_update_hud()
+		_show_floor_result(true)
+		return false
 	return true
 
 ## 教程: 固定脚本的敌方回合
