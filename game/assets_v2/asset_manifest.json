@@ -1,0 +1,624 @@
+{
+  "project": "Rummi Lite",
+  "version": "0.2.0-premium",
+  "generated_at": "2026-06-12",
+  "pipeline": "image-generated source sheets plus deterministic text/number compositing",
+  "assets": [
+    {
+      "path": "assets_v2/avatars/enemy_boar_cave.png",
+      "category": "avatars",
+      "role": "cave boar enemy avatar",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "method": "copied_ai_redraw",
+      "status": "generated_review"
+    },
+    {
+      "path": "assets_v2/avatars/enemy_boar_cave_circle.png",
+      "category": "avatars",
+      "role": "cave boar enemy circular avatar",
+      "dimensions": [
+        512,
+        512
+      ],
+      "method": "copied_ai_redraw",
+      "status": "generated_review"
+    },
+    {
+      "path": "assets_v2/avatars/player_adventurer.png",
+      "category": "avatars",
+      "role": "player adventurer avatar",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "method": "copied_ai_redraw",
+      "status": "generated_review"
+    },
+    {
+      "path": "assets_v2/avatars/player_adventurer_circle.png",
+      "category": "avatars",
+      "role": "player adventurer circular avatar",
+      "dimensions": [
+        512,
+        512
+      ],
+      "method": "copied_ai_redraw",
+      "status": "generated_review"
+    },
+    {
+      "path": "assets_v2/backgrounds/battle_lakeside_background.png",
+      "category": "backgrounds",
+      "role": "lakeside battle background",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "method": "copied_ai_redraw",
+      "status": "generated_review"
+    },
+    {
+      "path": "assets_v2/board/hand_rack.png",
+      "category": "board",
+      "role": "wooden hand rack",
+      "dimensions": [
+        900,
+        190
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/board/slot_cell.png",
+      "category": "board",
+      "role": "placement slot",
+      "dimensions": [
+        180,
+        130
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/board/table_felt.png",
+      "category": "board",
+      "role": "green felt table",
+      "dimensions": [
+        920,
+        620
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/board/table_frame.png",
+      "category": "board",
+      "role": "wooden table frame",
+      "dimensions": [
+        920,
+        430
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/board/wood_plaque.png",
+      "category": "board",
+      "role": "wood plaque",
+      "dimensions": [
+        360,
+        130
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/backs/card_back_blue.png",
+      "category": "cards",
+      "role": "blue card back",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_1.png",
+      "category": "cards",
+      "role": "blue value 1",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_2.png",
+      "category": "cards",
+      "role": "blue value 2",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_3.png",
+      "category": "cards",
+      "role": "blue value 3",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_4.png",
+      "category": "cards",
+      "role": "blue value 4",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_5.png",
+      "category": "cards",
+      "role": "blue value 5",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_6.png",
+      "category": "cards",
+      "role": "blue value 6",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/blue/card_blue_7.png",
+      "category": "cards",
+      "role": "blue value 7",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/joker/joker_black.png",
+      "category": "cards",
+      "role": "black joker",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/joker/joker_gold.png",
+      "category": "cards",
+      "role": "gold joker",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_1.png",
+      "category": "cards",
+      "role": "orange value 1",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_2.png",
+      "category": "cards",
+      "role": "orange value 2",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_3.png",
+      "category": "cards",
+      "role": "orange value 3",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_4.png",
+      "category": "cards",
+      "role": "orange value 4",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_5.png",
+      "category": "cards",
+      "role": "orange value 5",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_6.png",
+      "category": "cards",
+      "role": "orange value 6",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/orange/card_orange_7.png",
+      "category": "cards",
+      "role": "orange value 7",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_1.png",
+      "category": "cards",
+      "role": "red value 1",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_2.png",
+      "category": "cards",
+      "role": "red value 2",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_3.png",
+      "category": "cards",
+      "role": "red value 3",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_4.png",
+      "category": "cards",
+      "role": "red value 4",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_5.png",
+      "category": "cards",
+      "role": "red value 5",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_6.png",
+      "category": "cards",
+      "role": "red value 6",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/cards/red/card_red_7.png",
+      "category": "cards",
+      "role": "red value 7",
+      "dimensions": [
+        188,
+        252
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/badge_deck_count.png",
+      "category": "ui/badges",
+      "role": "badge_deck_count",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/badge_hp.png",
+      "category": "ui/badges",
+      "role": "badge_hp",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/badge_notification_red.png",
+      "category": "ui/badges",
+      "role": "notification count",
+      "dimensions": [
+        86,
+        86
+      ],
+      "method": "composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/badge_turn.png",
+      "category": "ui/badges",
+      "role": "badge_turn",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/base/badge_deck_count_base.png",
+      "category": "ui/badges/base",
+      "role": "badge_deck_count textless base",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/base/badge_hp_base.png",
+      "category": "ui/badges/base",
+      "role": "badge_hp textless base",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/badges/base/badge_turn_base.png",
+      "category": "ui/badges/base",
+      "role": "badge_turn textless base",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/base/button_hint_base.png",
+      "category": "ui/buttons/base",
+      "role": "button_hint textless base",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/base/button_play_base.png",
+      "category": "ui/buttons/base",
+      "role": "button_play textless base",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/base/button_sort_base.png",
+      "category": "ui/buttons/base",
+      "role": "button_sort textless base",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/base/button_undo_base.png",
+      "category": "ui/buttons/base",
+      "role": "button_undo textless base",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/button_hint.png",
+      "category": "ui/buttons",
+      "role": "提示",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/button_play.png",
+      "category": "ui/buttons",
+      "role": "出牌",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/button_sort.png",
+      "category": "ui/buttons",
+      "role": "整理",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/buttons/button_undo.png",
+      "category": "ui/buttons",
+      "role": "撤回",
+      "dimensions": [
+        360,
+        140
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/combo/combo_panel.png",
+      "category": "ui/combo",
+      "role": "combo_panel",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_composite",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/combo/combo_panel_base.png",
+      "category": "ui/badges/base",
+      "role": "combo_panel textless base",
+      "dimensions": [
+        230,
+        104
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/combo/combo_wordmark_panel.png",
+      "category": "ui",
+      "role": "leafy combo panel",
+      "dimensions": [
+        520,
+        170
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/icons/icon_chat.png",
+      "category": "ui/icons",
+      "role": "icon_chat",
+      "dimensions": [
+        150,
+        150
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/icons/icon_emoji.png",
+      "category": "ui/icons",
+      "role": "icon_emoji",
+      "dimensions": [
+        150,
+        150
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/icons/icon_menu.png",
+      "category": "ui/icons",
+      "role": "icon_menu",
+      "dimensions": [
+        150,
+        150
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    },
+    {
+      "path": "assets_v2/ui/icons/icon_settings.png",
+      "category": "ui/icons",
+      "role": "icon_settings",
+      "dimensions": [
+        150,
+        150
+      ],
+      "method": "generated_source_crop",
+      "status": "ready"
+    }
+  ]
+}

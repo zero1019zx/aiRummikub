@@ -3,22 +3,24 @@
 extends Control
 
 # ---------- 布局常量 (720x1280 竖屏) ----------
-const TILE_SIZE := Vector2(70, 94)
-const SX := 76.0
-const SY := 104.0
+const TILE_SIZE := Vector2(70, 100)
+const SX := 75.0
+const SY := 106.0
 const TABLE_COLS := 9
 const TABLE_ROWS := 6
 const RACK_COLS := 9
-const RACK_ROWS := 2
-const TABLE_ORIGIN := Vector2(21, 190)
-const RACK_ORIGIN := Vector2(21, 845)
-const DROP_RADIUS := 70.0
+const RACK_ROWS := 1
+const TABLE_ORIGIN := Vector2(25, 178)
+const RACK_ORIGIN := Vector2(25, 932)
+const DROP_RADIUS := 62.0
+# assets_v2 资源根 + 烘焙适配资源(去留白/受控九宫格, Godot端1:1贴图)
+const AV2 := "res://assets_v2/"
+const FIT := "res://assets_v2/fitted/"
 
 # ---------- 对局常量 ----------
 const HAND_START := 8
 const MAX_TURNS := 5
 const EMPTY_HAND_BONUS := 20
-const HINTS_TOTAL := 3
 const EXCHANGES_PER_FLOOR := 2
 const FLOOR_TARGETS: Array[int] = [40, 60, 85, 125, 180, 260, 380, 550] # 分数挑战目标
 const BATTLE_HP: Array[int] = [40, 55, 75, 100, 135, 180, 240, 320] # 对战敌方体力(难度主要靠AI变强)
@@ -37,7 +39,6 @@ const COL_TOPBAR := Color("#2e8b4f")
 const COL_TOPBAR_EDGE := Color("#246c3d")
 const COL_BTN_PLAY := Color("#3cc25e")
 const COL_BTN_SORT := Color("#3b8bea")
-const COL_BTN_HINT := Color("#f6b51e")
 const COL_BTN_UNDO := Color("#ef7f33")
 
 # ---------- 状态 ----------
@@ -47,7 +48,6 @@ var rack_grid: Array = []
 var score := 0
 var turn := 1
 var floor_num := 1
-var hints_left := HINTS_TOTAL
 var exchanges_left := EXCHANGES_PER_FLOOR
 var sort_by_color := true
 var game_over := false
@@ -76,7 +76,7 @@ var tut_btn: Button
 var board_frame: Panel # 回合开始时的棋盘闪框
 
 # 对战HUD部件
-var pill: TextureRect
+var pill: TextureRect # 中央木牌(层/回合)
 var badge_l: TextureRect
 var badge_r: TextureRect
 var lbl_turn_b: Label # 对战模式的层/回合(左上)
@@ -91,11 +91,13 @@ var lbl_turn: Label
 var lbl_score: Label
 var lbl_target: Label
 var lbl_deck: Label
-var lbl_hint_count: Label
 var lbl_ex_count: Label
+# 底部头像簇 (assets_v2)
+var player_av: TextureRect
+var lbl_me: Label
 var toast_label: Label
-var btn_play: Button
-var btn_exchange: Button
+var btn_play: TextureButton
+var btn_exchange: TextureButton # 换牌/确认 两态(贴图切换)
 var ui_font: FontFile
 
 func _ready() -> void:
@@ -185,112 +187,120 @@ func _build_static_ui() -> void:
 		fbs.append(ThemeDB.fallback_font)
 		ui_font.fallbacks = fbs
 
-	# 整幅背景: 天空场景 + 木桌 + 毛毡 (程序生成贴图)
-	var bg := _texture_rect("res://assets/ui/bg.png", Rect2(0, 0, 720, 1280))
+	# 整幅背景: 湖畔战斗场景 (assets_v2)
+	var bg := _texture_rect(AV2 + "backgrounds/battle_lakeside_background.png", Rect2(0, 0, 720, 1280))
 	add_child(bg)
 
-	# --- 顶部HUD (天空区) ---
-	pill = _texture_rect("res://assets/ui/pill_cream.png", Rect2(222, 14, 276, 70))
+	# --- 棋盘: 毛毡+格位(已删木框, 放大到接近屏宽), Godot端1:1贴图 ---
+	var board := _texture_rect(FIT + "felt.png", Rect2(10, 150, 700, 686))
+	add_child(board)
+
+	# --- 顶部HUD: 中央木牌(层/回合) ---
+	pill = _texture_rect(FIT + "plaque.png", Rect2(254, 8, 212, 89))
 	add_child(pill)
-	lbl_turn = _make_label("第1层 1/%d" % MAX_TURNS, 30, Color("#6b4a23"))
-	lbl_turn.size = Vector2(276, 70)
+	lbl_turn = _make_label("第1层 1/%d" % MAX_TURNS, 25, Color("#4a2f12"))
+	lbl_turn.position = Vector2(0, -3)
+	lbl_turn.size = Vector2(212, 89)
 	lbl_turn.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_turn.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	pill.add_child(lbl_turn)
 
-	badge_l = _texture_rect("res://assets/ui/badge_dark.png", Rect2(16, 24, 190, 52))
+	# 牌库角标(分数模式左上 / 对战模式右上, 位置在_start_floor里按模式切换)
+	badge_l = _texture_rect(FIT + "badge_deck.png", Rect2(14, 14, 150, 84))
 	add_child(badge_l)
-	lbl_score = _make_label("得分 0", 26, Color("#ffd94d"))
-	lbl_score.size = Vector2(190, 52)
-	lbl_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_score.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	badge_l.add_child(lbl_score)
+	lbl_deck = _make_label("0", 26, Color("#3a2a14"))
+	lbl_deck.position = Vector2(48, 0)
+	lbl_deck.size = Vector2(93, 84)
+	lbl_deck.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_deck.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	badge_l.add_child(lbl_deck)
 
-	badge_r = _texture_rect("res://assets/ui/badge_dark.png", Rect2(514, 24, 190, 52))
+	# 目标角标(分数模式右上)
+	badge_r = _texture_rect(FIT + "badge_turn.png", Rect2(492, 14, 150, 84))
 	add_child(badge_r)
-	lbl_target = _make_label("目标 %d" % FLOOR_TARGETS[0], 26, Color.WHITE)
-	lbl_target.size = Vector2(190, 52)
+	lbl_target = _make_label("目标 %d" % FLOOR_TARGETS[0], 19, Color("#3a2a14"))
+	lbl_target.position = Vector2(42, 0)
+	lbl_target.size = Vector2(99, 84)
 	lbl_target.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_target.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	badge_r.add_child(lbl_target)
 
-	lbl_deck = _make_label("牌库 0", 24, Color.WHITE)
-	lbl_deck.size = Vector2(720, 30)
-	lbl_deck.position = Vector2(0, 96)
-	lbl_deck.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_deck.add_theme_color_override("font_outline_color", Color("#2e6b3e"))
-	lbl_deck.add_theme_constant_override("outline_size", 4)
-	add_child(lbl_deck)
-
-	# --- 对战HUD: 左上层数 + 我方血条 + 敌人展示区(score模式隐藏) ---
-	lbl_turn_b = _make_label("第1层 · 回合1", 26, Color.WHITE)
-	lbl_turn_b.position = Vector2(16, 8)
+	# 对战模式: 顶部副信息(敌手牌/金币), 居中浮于木牌下方
+	lbl_turn_b = _make_label("", 20, Color.WHITE)
+	lbl_turn_b.position = Vector2(260, 100)
+	lbl_turn_b.size = Vector2(200, 24)
+	lbl_turn_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_turn_b.add_theme_color_override("font_outline_color", Color("#2e6b3e"))
 	lbl_turn_b.add_theme_constant_override("outline_size", 4)
 	add_child(lbl_turn_b)
-	pbar = _make_hp_bar(Rect2(16, 48, 214, 40), Color("#3cc25e"))
-	add_child(pbar.root)
-	ebox = _rounded_panel(Rect2(434, 8, 272, 116), Color(0.08, 0.2, 0.12, 0.6), 16)
+
+	# --- 对战HUD: 左上敌人展示区(score模式隐藏) ---
+	ebox = _rounded_panel(Rect2(8, 8, 250, 98), Color(0.06, 0.16, 0.10, 0.42), 18)
 	add_child(ebox)
-	var eavatar := _texture_rect("res://assets/ui/enemy.png", Rect2(6, 16, 84, 84))
+	var eavatar := _texture_rect(AV2 + "avatars/enemy_boar_cave_circle.png", Rect2(6, 6, 86, 86))
 	ebox.add_child(eavatar)
-	ebar = _make_hp_bar(Rect2(96, 14, 168, 38), Color("#e84b3c"))
+	ebar = _make_hp_bar(Rect2(100, 14, 142, 30), Color("#e84b3c"))
 	ebox.add_child(ebar.root)
-	enemy_action = _make_label("等待出牌…", 15, Color("#ffd9c9"))
-	enemy_action.position = Vector2(98, 56)
-	enemy_action.size = Vector2(168, 58)
+	enemy_action = _make_label("等待出牌…", 14, Color("#ffe6d6"))
+	enemy_action.position = Vector2(100, 50)
+	enemy_action.size = Vector2(144, 46)
 	enemy_action.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ebox.add_child(enemy_action)
-	# 进入对战层之前先隐藏
-	lbl_turn_b.visible = false
-	pbar.root.visible = false
-	ebox.visible = false
 
-	# 帮助按钮 "?"
-	var help_btn := _make_button("?", "blue", Rect2(664, 132, 44, 44))
-	help_btn.add_theme_font_size_override("font_size", 26)
-	help_btn.pressed.connect(_show_help)
-	add_child(help_btn)
-
-	# 遗物图标条(桌沿区, 点击图标看说明)
-	relic_bar = Control.new()
-	relic_bar.position = Vector2(16, 134)
-	relic_bar.size = Vector2(640, 44)
-	add_child(relic_bar)
-
-	# --- 桌面格位 (极淡的暗块, 仅作落位指引) ---
-	for r in TABLE_ROWS:
-		for c in TABLE_COLS:
-			var slot := _rounded_panel(Rect2(_slot_pos("table", r, c) + Vector2(3, 3), TILE_SIZE - Vector2(6, 6)), Color(0, 0, 0, 0.05), 10)
-			add_child(slot)
-
-	# --- 牌架 (木纹贴图, 自带搁板) ---
-	var rackp := _texture_rect("res://assets/ui/rack.png", Rect2(10, 828, 700, 232))
+	# --- 牌架 (烘焙单排木托盘) ---
+	var rackp := _texture_rect(FIT + "rack1.png", Rect2(10, 916, 700, 138))
 	add_child(rackp)
 
-	# --- 按钮行 (出牌/换牌/整理/提示/撤回) ---
-	btn_play = _make_button("出牌", "green", Rect2(12, 1086, 160, 84))
-	btn_play.pressed.connect(_on_end_turn)
+	# 设置按钮(齿轮)
+	var help_btn := _icon_button(AV2 + "ui/icons/icon_settings.png", Rect2(664, 14, 46, 46), _show_help)
+	add_child(help_btn)
+
+	# 遗物图标条(顶部左侧, 点击图标看说明)
+	relic_bar = Control.new()
+	relic_bar.position = Vector2(14, 118)
+	relic_bar.size = Vector2(238, 34)
+	add_child(relic_bar)
+
+	# --- 底部玩家簇: 头像 + 我 + 我方血条 + Combo面板 ---
+	# (放在牌架之后入树, 确保头像在最上层, 不被牌架遮挡)
+	# Combo面板(分数, 居中浮于毛毡下沿)
+	var combo := _texture_rect(FIT + "combo.png", Rect2(247, 820, 226, 58))
+	add_child(combo)
+	lbl_score = _make_label("0", 30, Color("#fff2c4"))
+	lbl_score.position = Vector2(76, 0)
+	lbl_score.size = Vector2(135, 58)
+	lbl_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_score.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl_score.add_theme_color_override("font_outline_color", Color("#6b3b0c"))
+	lbl_score.add_theme_constant_override("outline_size", 4)
+	combo.add_child(lbl_score)
+	# 玩家头像(浮于毛毡左下角, 完整可见, 不被牌架遮挡)
+	player_av = _texture_rect(AV2 + "avatars/player_adventurer_circle.png", Rect2(12, 824, 82, 82))
+	add_child(player_av)
+	lbl_me = _make_label("我", 23, Color.WHITE)
+	lbl_me.position = Vector2(100, 826)
+	lbl_me.size = Vector2(120, 30)
+	lbl_me.add_theme_color_override("font_outline_color", Color("#3a5a2e"))
+	lbl_me.add_theme_constant_override("outline_size", 4)
+	add_child(lbl_me)
+	pbar = _make_hp_bar(Rect2(100, 856, 150, 26), Color("#3cc25e"))
+	add_child(pbar.root)
+
+	# --- 按钮行 (出牌/换牌/整理/撤回): 整图烘字按钮, 4个尺寸一致、文字对齐 ---
+	btn_play = _image_button("btn_play", Rect2(13, 1064, 164, 77), _on_end_turn)
 	add_child(btn_play)
-	btn_exchange = _make_button("换牌", "orange", Rect2(184, 1086, 124, 84))
-	btn_exchange.pressed.connect(_on_exchange)
+	btn_exchange = _image_button("btn_hint", Rect2(190, 1064, 164, 77), _on_exchange)
 	add_child(btn_exchange)
 	lbl_ex_count = _badge_on(btn_exchange, str(EXCHANGES_PER_FLOOR))
-	var btn_sort := _make_button("整理", "blue", Rect2(320, 1086, 124, 84))
-	btn_sort.pressed.connect(_on_sort)
+	var btn_sort := _image_button("btn_sort", Rect2(367, 1064, 164, 77), _on_sort)
 	add_child(btn_sort)
-	var btn_hint := _make_button("提示", "yellow", Rect2(456, 1086, 124, 84))
-	btn_hint.pressed.connect(_on_hint)
-	add_child(btn_hint)
-	lbl_hint_count = _badge_on(btn_hint, str(HINTS_TOTAL))
-	var btn_undo := _make_button("撤回", "purple", Rect2(592, 1086, 124, 84))
-	btn_undo.pressed.connect(_on_undo)
+	var btn_undo := _image_button("btn_undo", Rect2(544, 1064, 164, 77), _on_undo)
 	add_child(btn_undo)
 
 	# 提示文字层
 	toast_label = _make_label("", 30, Color.WHITE)
 	toast_label.size = Vector2(640, 60)
-	toast_label.position = Vector2(40, 1190)
+	toast_label.position = Vector2(40, 1126)
 	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	toast_label.add_theme_color_override("font_outline_color", Color("#5b3a14"))
 	toast_label.add_theme_constant_override("outline_size", 4)
@@ -302,14 +312,14 @@ func _build_static_ui() -> void:
 	tiles_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(tiles_layer)
 
-	# 回合开始闪框(棋盘描边)
+	# 回合开始闪框(毛毡描边, 对齐 felt.png)
 	board_frame = Panel.new()
-	board_frame.position = Vector2(10, 200)
-	board_frame.size = Vector2(700, 640)
+	board_frame.position = Vector2(16, 156)
+	board_frame.size = Vector2(688, 674)
 	board_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var frame_sb := StyleBoxFlat.new()
 	frame_sb.bg_color = Color(0, 0, 0, 0)
-	frame_sb.set_corner_radius_all(24)
+	frame_sb.set_corner_radius_all(30)
 	frame_sb.set_border_width_all(6)
 	frame_sb.border_color = Color("#ffd94d")
 	board_frame.add_theme_stylebox_override("panel", frame_sb)
@@ -317,7 +327,7 @@ func _build_static_ui() -> void:
 	add_child(board_frame)
 
 	# 教程指引面板(默认隐藏)
-	tut_panel = _rounded_panel(Rect2(30, 645, 660, 168), Color(0.99, 0.96, 0.9, 0.96), 18)
+	tut_panel = _rounded_panel(Rect2(30, 632, 660, 168), Color(0.99, 0.96, 0.9, 0.96), 18)
 	tut_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	tut_panel.visible = false
 	add_child(tut_panel)
@@ -404,8 +414,78 @@ func _make_button(text: String, color_name: String, rect: Rect2) -> Button:
 	b.add_theme_stylebox_override("pressed", sbp)
 	return b
 
+## 九宫格拉伸贴图(木框/木牌/牌架等保持边角不变形)
+func _nine(path: String, rect: Rect2, ml: int, mt: int, mr: int, mb: int) -> NinePatchRect:
+	var n := NinePatchRect.new()
+	n.texture = load(path)
+	n.position = rect.position
+	n.size = rect.size
+	n.patch_margin_left = ml
+	n.patch_margin_top = mt
+	n.patch_margin_right = mr
+	n.patch_margin_bottom = mb
+	n.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return n
+
+## 图标按钮(设置齿轮等)
+func _icon_button(path: String, rect: Rect2, on_press: Callable) -> TextureButton:
+	var b := TextureButton.new()
+	b.texture_normal = load(path)
+	b.ignore_texture_size = true
+	b.stretch_mode = TextureButton.STRETCH_SCALE
+	b.position = rect.position
+	b.size = rect.size
+	b.pressed.connect(on_press)
+	return b
+
+## 整图烘字按钮(fitted/btn_*.png, 文字已烘进底板 → 4 按钮完全一致、永不错位)
+func _image_button(tex_name: String, rect: Rect2, on_press: Callable) -> TextureButton:
+	var b := TextureButton.new()
+	b.texture_normal = load(FIT + tex_name + ".png")
+	b.ignore_texture_size = true
+	b.stretch_mode = TextureButton.STRETCH_SCALE
+	b.position = rect.position
+	b.size = rect.size
+	b.pressed.connect(on_press)
+	return b
+
+## assets_v2 动作按钮: 彩色底板(无字) + 居中中文 + 按下下沉
+func _action_button(text: String, base_name: String, rect: Rect2) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.position = rect.position
+	b.size = rect.size
+	if ui_font != null:
+		b.add_theme_font_override("font", ui_font)
+	b.add_theme_font_size_override("font_size", 30)
+	b.add_theme_color_override("font_color", Color.WHITE)
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_color", Color.WHITE)
+	b.add_theme_color_override("font_focus_color", Color.WHITE)
+	b.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.35))
+	b.add_theme_constant_override("shadow_offset_y", 2)
+	var tex: Texture2D = load(FIT + "%s.png" % base_name)
+	var sb := _av2_btn_sb(tex)
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", sb)
+	b.add_theme_stylebox_override("focus", sb)
+	var sbp := _av2_btn_sb(tex)
+	sbp.content_margin_top = 8
+	b.add_theme_stylebox_override("pressed", sbp)
+	return b
+
+## assets_v2 按钮底板九宫格(边距适配矮按钮)
+func _av2_btn_sb(tex: Texture2D) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = tex
+	sb.texture_margin_left = 24
+	sb.texture_margin_right = 24
+	sb.texture_margin_top = 24
+	sb.texture_margin_bottom = 24
+	return sb
+
 ## 按钮右上角的红色计数角标
-func _badge_on(btn: Button, text: String) -> Label:
+func _badge_on(btn: BaseButton, text: String) -> Label:
 	var badge := _rounded_panel(Rect2(btn.size.x - 34, -8, 34, 34), Color("#e74c3c"), 17)
 	var l := _make_label(text, 22, Color.WHITE)
 	l.position = Vector2(0, 2)
@@ -588,27 +668,19 @@ func _start_floor() -> void:
 	game_over = false
 	exchange_mode = false
 	busy = false
-	btn_exchange.text = "换牌"
+	btn_exchange.texture_normal = load(FIT + "btn_hint.png")
 	# 按模式切换顶部HUD形态(教程沿用对战HUD)
+	# 木牌(层/回合)、牌库角标、底部玩家簇 + Combo 两种模式都常驻
 	var is_battle := mode != "score"
-	pill.visible = not is_battle
-	badge_l.visible = not is_battle
-	badge_r.visible = not is_battle
-	lbl_turn_b.visible = is_battle
-	pbar.root.visible = is_battle
-	ebox.visible = is_battle
+	badge_r.visible = not is_battle      # 目标角标仅分数模式
+	lbl_turn_b.visible = is_battle       # 顶部副信息(敌手牌/金币)仅对战
+	pbar.root.visible = is_battle        # 我方血条仅对战
+	ebox.visible = is_battle             # 敌人展示区仅对战
 	enemy_action.text = "等待出牌…"
-	if is_battle:
-		lbl_deck.position = Vector2(16, 92)
-		lbl_deck.size = Vector2(420, 30)
-		lbl_deck.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	else:
-		lbl_deck.position = Vector2(0, 96)
-		lbl_deck.size = Vector2(720, 30)
-		lbl_deck.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# 牌库角标: 分数模式居左上; 对战模式左上让位给敌人区, 移到右上
+	badge_l.position = Vector2(492, 14) if is_battle else Vector2(14, 14)
 	score = 0
 	turn = 1
-	hints_left = HINTS_TOTAL
 	exchanges_left = EXCHANGES_PER_FLOOR
 	deck = Rules.build_deck()
 	table_grid = []
@@ -1165,7 +1237,7 @@ func _on_exchange() -> void:
 			_toast("本层换牌次数已用完")
 			return
 		exchange_mode = true
-		btn_exchange.text = "确认"
+		btn_exchange.texture_normal = load(FIT + "btn_confirm.png")
 		for row in rack_grid:
 			for t in row:
 				if t != null:
@@ -1208,7 +1280,7 @@ func _on_exchange() -> void:
 
 func _exit_exchange_mode() -> void:
 	exchange_mode = false
-	btn_exchange.text = "换牌"
+	btn_exchange.texture_normal = load(FIT + "btn_hint.png")
 	for row in rack_grid:
 		for t in row:
 			if t != null:
@@ -1262,32 +1334,6 @@ func _on_sort() -> void:
 		_animate_to_slot(t, "rack", r, c)
 		i += 1
 
-func _on_hint() -> void:
-	if game_over or exchange_mode or busy:
-		return
-	if mode == "tutorial":
-		_toast("教程中暂不可用")
-		return
-	if hints_left <= 0:
-		_toast("提示次数已用完")
-		return
-	var hand_tiles: Array = []
-	for row in rack_grid:
-		for t in row:
-			if t != null:
-				hand_tiles.append(t)
-	var defs: Array = []
-	for t in hand_tiles:
-		defs.append(t.def)
-	var idx := Rules.find_hint(defs)
-	if idx.is_empty():
-		_toast("手牌中没有可直接组成的牌组")
-		return
-	hints_left -= 1
-	lbl_hint_count.text = str(hints_left)
-	for i in idx:
-		hand_tiles[i].flash_hint()
-
 func _on_undo() -> void:
 	if game_over or exchange_mode or busy:
 		return
@@ -1337,18 +1383,18 @@ func _restore_snapshot() -> void:
 
 # ---------- HUD / 结算 ----------
 func _update_hud() -> void:
+	# 木牌(层/回合)、Combo分数、牌库角标 两种模式都刷新
+	lbl_score.text = "%d" % score
+	lbl_deck.text = "%d" % deck.size()
 	if mode != "score":
-		lbl_turn_b.text = "第%d层 · 回合%d" % [floor_num, turn]
+		lbl_turn.text = "第%d层 回合%d" % [floor_num, turn]
 		_update_bar(pbar, "我方", player_hp, PLAYER_MAX_HP)
 		var ename: String = "对手" if mode == "tutorial" else String(_ai_cfg().name)
 		_update_bar(ebar, ename, enemy_hp, _battle_max())
-		lbl_deck.text = "牌库 %d · 敌手牌 %d · 金币 %d" % [deck.size(), enemy_hand.size(), gold]
+		lbl_turn_b.text = "敌手 %d · 金币 %d" % [enemy_hand.size(), gold]
 	else:
 		lbl_turn.text = "第%d层 %d/%d" % [floor_num, turn, MAX_TURNS]
-		lbl_score.text = "得分 %d" % score
 		lbl_target.text = "目标 %d" % _floor_target()
-		lbl_deck.text = "牌库 %d" % deck.size()
-	lbl_hint_count.text = str(hints_left)
 	lbl_ex_count.text = str(exchanges_left)
 
 # ---------- 层间商店 ----------

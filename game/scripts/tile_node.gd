@@ -59,9 +59,19 @@ func setup(d: Dictionary, size_px: Vector2) -> void:
 	add_child(shadow)
 
 	var tex := TextureRect.new()
-	var path := "res://assets/tiles/tile_joker.png" if def.joker \
-		else "res://assets/tiles/tile_%d_%d.png" % [def.color, def.num]
-	tex.texture = load(path)
+	# assets_v2 高保真卡面: 0红/1蓝/2橙 → red/blue/orange, joker → 金色鬼牌
+	const COLOR_NAMES := {0: "red", 1: "blue", 2: "orange"}
+	var path: String
+	if def.joker:
+		path = "res://assets_v2/cards/joker/joker_gold.png"
+	else:
+		var cname: String = COLOR_NAMES.get(int(def.color), "red")
+		path = "res://assets_v2/cards/%s/card_%s_%d.png" % [cname, cname, int(def.num)]
+	# 卡面原图(188x252)四周有透明留白, 用区域裁掉留白让牌面填满卡槽
+	var atlas := AtlasTexture.new()
+	atlas.atlas = load(path)
+	atlas.region = Rect2(24, 12, 140, 224)
+	tex.texture = atlas
 	tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tex.stretch_mode = TextureRect.STRETCH_SCALE
 	tex.size = size_px
