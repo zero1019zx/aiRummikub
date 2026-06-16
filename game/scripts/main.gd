@@ -58,8 +58,9 @@ var exchange_mode := false
 var overlay_nodes: Array = []
 var relic_mgr := RelicManager.new()
 var mode := "score" # "score" 分数挑战 / "battle" 对战原型
-var arena_mode := false # 场面争夺: 复用对战框架, 仅替换我方算分(出牌张数×(1+场面牌型分), 结算即消耗)
+var arena_mode := false # 场面争夺: 复用对战框架, 仅替换我方算分(出牌张数×(1+场面牌型分))
 var lbl_arena: Label # 场面倍率显示
+var arena_scored := {} # uid -> 上次领取倍率时该链的组成签名(面值多重集); 牌不动, 链改组后倍率重新生效
 var player_hp := PLAYER_MAX_HP
 var enemy_hp := 0
 var enemy_hand: Array = []
@@ -748,6 +749,7 @@ func _start_floor() -> void:
 	# 牌库角标: 分数模式居左上; 对战模式左上让位给敌人区, 移到右上
 	badge_l.position = Vector2(492, 14) if is_battle else Vector2(14, 14)
 	battle_log.clear()                   # 清空上一层的对战记录
+	arena_scored.clear()                 # 清空场面争夺的"已领链"记录
 	score = 0
 	turn = 1
 	exchanges_left = EXCHANGES_PER_FLOOR
@@ -905,52 +907,69 @@ func _shape_score(kind: String, n: int) -> int:
 		return 1
 	return 0
 
-## 当前场面牌型分之和 S(用于实时倍率显示)
-func _board_shape_value() -> int:
+## 链的"组成签名"(面值多重集): 判断这条链是否被改动过
+func _chain_sig(tiles: Array) -> Array:
+	var sig: Array = []
+	for t in tiles:
+		sig.append(_val_key(t.def))
+	sig.sort()
+	return sig
+
+## 链是否"新鲜"(倍率可领): 只要不是"原样保留的已领链"就算新鲜。
+## 已领 = 链内每张牌上次领取时的签名都 == 当前签名(没被改组过)。
+## 牌重排成别的链 → 签名变化 → 重新新鲜 → 倍率再次生效。
+func _chain_fresh(tiles: Array, sig: Array) -> bool:
+	for t in tiles:
+		if not arena_scored.has(t.uid) or arena_scored[t.uid] != sig:
+			return true
+	return false
+
+## 结算: 出牌张数 k × (1 + 新鲜链牌型分 S)。"消耗"= 把刚领的链标记为已领(牌不动)。
+func _arena_settle(checked: Array, k: int) -> int:
+	var s := 0
+	var harvested: Array = [] # [tiles, sig] 本次领到倍率的新鲜链
+	for entry in checked:
+		var sig := _chain_sig(entry.tiles)
+		if _chain_fresh(entry.tiles, sig):
+			s += _shape_score(entry.res.kind, entry.tiles.size())
+			harvested.append([entry.tiles, sig])
+	var gained: int = k * (1 + s)
+	score += gained
+	battle_log.append("第%d回合 · 我方  出%d张 × (1+新鲜场面%d) = %d 伤害" % [turn, k, s, gained])
+	_show_score_pop("%d × %d = %d!" % [k, 1 + s, gained])
+	# 消耗: 这些链倍率已领 → 记录其当前组成; 牌留在桌面, 重排成别的链后会重新新鲜
+	for h in harvested:
+		for t in h[0]:
+			arena_scored[t.uid] = h[1]
+	return gained
+
+## 场面倍率显示(随拖拽实时刷新) + 已领链暗淡提示
+func _refresh_arena_meter() -> void:
+	if lbl_arena == null:
+		return
+	lbl_arena.visible = arena_mode
+	if not arena_mode:
+		return
+	# 先全部复原, 再把"已领链"(倍率已消耗)调暗, 提示需要重排才能再生效
+	for row in table_grid:
+		for t in row:
+			if t != null:
+				t.modulate = Color.WHITE
 	var s := 0
 	for g in _parse_table_groups():
 		var defs: Array = []
 		for t in g:
 			defs.append(t.def)
 		var res := Rules.check_set(defs)
-		if res.valid:
-			s += _shape_score(res.kind, g.size())
-	return s
-
-## 结算: 出牌张数 k × (1 + 场面牌型分 S), 然后"结算即消耗"
-func _arena_settle(checked: Array, k: int) -> int:
-	var s := 0
-	for entry in checked:
-		s += _shape_score(entry.res.kind, entry.tiles.size())
-	var gained: int = k * (1 + s)
-	score += gained
-	battle_log.append("第%d回合 · 我方  出%d张 × (1+场面%d) = %d 伤害" % [turn, k, s, gained])
-	_show_score_pop("%d × %d = %d!" % [k, 1 + s, gained])
-	_arena_consume(checked)
-	return gained
-
-## 结算即消耗: 把"含本回合新牌"的链从场面清走(放电清场), 释放格位
-func _arena_consume(checked: Array) -> void:
-	for entry in checked:
-		var touched := false
-		for t in entry.tiles:
-			if t.is_new:
-				touched = true
-				break
-		if not touched:
+		if not res.valid:
 			continue
-		for t in entry.tiles:
-			if t.zone == "table" and table_grid[t.row][t.col] == t:
-				table_grid[t.row][t.col] = null
-			t.queue_free()
-
-## 场面倍率显示(随拖拽实时刷新)
-func _refresh_arena_meter() -> void:
-	if lbl_arena == null:
-		return
-	lbl_arena.visible = arena_mode
-	if arena_mode:
-		lbl_arena.text = "场面 ×%d" % (1 + _board_shape_value())
+		var sig := _chain_sig(g)
+		if _chain_fresh(g, sig):
+			s += _shape_score(res.kind, g.size())
+		else:
+			for t in g:
+				t.modulate = Color(0.66, 0.66, 0.72) # 已领: 倍率为0, 需重排
+	lbl_arena.text = "场面 ×%d" % (1 + s)
 
 # ---------- 回合结算 ----------
 func _on_end_turn() -> void:
@@ -1086,9 +1105,8 @@ func _on_end_turn() -> void:
 				t.home_zone = "table"
 				t.set_new_highlight(false)
 
-	# 自动整理桌面: 组间留空, 顺子留头尾呼吸位, 对子留补位 (场面争夺已自行清场)
-	if not arena_mode:
-		_auto_layout_table(checked)
+	# 自动整理桌面: 组间留空, 顺子留头尾呼吸位, 对子留补位 (场面争夺牌也留在桌面)
+	_auto_layout_table(checked)
 
 	# 空手奖励 (对战/教程计入伤害, 分数模式计入得分)
 	if _rack_count() == 0:
