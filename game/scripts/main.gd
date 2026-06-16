@@ -3,16 +3,16 @@
 extends Control
 
 # ---------- 布局常量 (720x1280 竖屏) ----------
-const TILE_SIZE := Vector2(70, 100)
-const SX := 75.0
-const SY := 106.0
+const TILE_SIZE := Vector2(66, 94)
+const SX := 73.0
+const SY := 100.0
 const TABLE_COLS := 9
 const TABLE_ROWS := 6
 const RACK_COLS := 9
 const RACK_ROWS := 1
-const TABLE_ORIGIN := Vector2(25, 178)
-const RACK_ORIGIN := Vector2(25, 932)
-const DROP_RADIUS := 62.0
+const TABLE_ORIGIN := Vector2(35, 188)
+const RACK_ORIGIN := Vector2(35, 930)
+const DROP_RADIUS := 60.0
 # assets_v2 资源根 + 烘焙适配资源(去留白/受控九宫格, Godot端1:1贴图)
 const AV2 := "res://assets_v2/"
 const FIT := "res://assets_v2/fitted/"
@@ -58,6 +58,8 @@ var exchange_mode := false
 var overlay_nodes: Array = []
 var relic_mgr := RelicManager.new()
 var mode := "score" # "score" 分数挑战 / "battle" 对战原型
+var arena_mode := false # 场面争夺: 复用对战框架, 仅替换我方算分(出牌张数×(1+场面牌型分), 结算即消耗)
+var lbl_arena: Label # 场面倍率显示
 var player_hp := PLAYER_MAX_HP
 var enemy_hp := 0
 var enemy_hand: Array = []
@@ -95,6 +97,10 @@ var lbl_ex_count: Label
 # 底部头像簇 (assets_v2)
 var player_av: TextureRect
 var lbl_me: Label
+var lbl_gold: Label        # 我方金币(我方信息区)
+var btn_log: TextureButton # 对战记录按钮(对战右上角)
+var battle_log: Array = [] # 逐回合伤害计算记录
+# 注: lbl_turn_b 复用为"对手手牌数", 置于对手头像下方
 var toast_label: Label
 var btn_play: TextureButton
 var btn_exchange: TextureButton # 换牌/确认 两态(贴图切换)
@@ -117,32 +123,43 @@ func _show_mode_select() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(dim)
 	overlay_nodes.append(dim)
-	var panel := _rounded_panel(Rect2(80, 340, 560, 580), Color("#fdf6e8"), 24)
+	var panel := _rounded_panel(Rect2(80, 300, 560, 680), Color("#fdf6e8"), 24)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(panel)
 	overlay_nodes.append(panel)
 	var title := _make_label("选择模式", 46, Color("#6b4a23"))
 	title.size = Vector2(560, 70)
-	title.position = Vector2(0, 40)
+	title.position = Vector2(0, 36)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(title)
-	var b1 := _make_button("对战模式", "purple", Rect2(130, 140, 300, 90))
+	var b1 := _make_button("对战模式", "purple", Rect2(130, 120, 300, 86))
 	b1.pressed.connect(func ():
 		mode = "battle"
+		arena_mode = false
 		_reset_run()
 		floor_num = 1
 		_start_floor())
 	panel.add_child(b1)
-	var b2 := _make_button("分数挑战", "green", Rect2(130, 260, 300, 90))
+	var b2 := _make_button("分数挑战", "green", Rect2(130, 224, 300, 86))
 	b2.pressed.connect(func ():
 		mode = "score"
+		arena_mode = false
 		_reset_run()
 		floor_num = 1
 		_start_floor())
 	panel.add_child(b2)
-	var b3 := _make_button("新手教程", "orange", Rect2(130, 380, 300, 90))
+	var b4 := _make_button("场面争夺", "blue", Rect2(130, 328, 300, 86))
+	b4.pressed.connect(func ():
+		mode = "battle"      # 复用对战框架(敌人/血量/层数)
+		arena_mode = true    # 仅替换我方算分
+		_reset_run()
+		floor_num = 1
+		_start_floor())
+	panel.add_child(b4)
+	var b3 := _make_button("新手教程", "orange", Rect2(130, 432, 300, 86))
 	b3.pressed.connect(func ():
 		mode = "tutorial"
+		arena_mode = false
 		_reset_run()
 		floor_num = 1
 		_start_floor())
@@ -191,8 +208,8 @@ func _build_static_ui() -> void:
 	var bg := _texture_rect(AV2 + "backgrounds/battle_lakeside_background.png", Rect2(0, 0, 720, 1280))
 	add_child(bg)
 
-	# --- 棋盘: 毛毡+格位(已删木框, 放大到接近屏宽), Godot端1:1贴图 ---
-	var board := _texture_rect(FIT + "felt.png", Rect2(10, 150, 700, 686))
+	# --- 棋盘: 毛毡+格位(已删木框, 放大到接近屏宽, 卡牌内收进绿区), Godot端1:1贴图 ---
+	var board := _texture_rect(FIT + "felt.png", Rect2(2, 150, 716, 670))
 	add_child(board)
 
 	# --- 顶部HUD: 中央木牌(层/回合) ---
@@ -225,76 +242,90 @@ func _build_static_ui() -> void:
 	lbl_target.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	badge_r.add_child(lbl_target)
 
-	# 对战模式: 顶部副信息(敌手牌/金币), 居中浮于木牌下方
-	lbl_turn_b = _make_label("", 20, Color.WHITE)
-	lbl_turn_b.position = Vector2(260, 100)
-	lbl_turn_b.size = Vector2(200, 24)
-	lbl_turn_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_turn_b.add_theme_color_override("font_outline_color", Color("#2e6b3e"))
-	lbl_turn_b.add_theme_constant_override("outline_size", 4)
-	add_child(lbl_turn_b)
-
-	# --- 对战HUD: 左上敌人展示区(score模式隐藏) ---
-	ebox = _rounded_panel(Rect2(8, 8, 250, 98), Color(0.06, 0.16, 0.10, 0.42), 18)
+	# --- 对战HUD: 左上敌人展示区(score模式隐藏); 对手手牌数置于头像下方 ---
+	ebox = _rounded_panel(Rect2(8, 8, 252, 120), Color(0.06, 0.16, 0.10, 0.42), 18)
 	add_child(ebox)
-	var eavatar := _texture_rect(AV2 + "avatars/enemy_boar_cave_circle.png", Rect2(6, 6, 86, 86))
+	var eavatar := _texture_rect(AV2 + "avatars/enemy_boar_cave_circle.png", Rect2(6, 6, 84, 84))
 	ebox.add_child(eavatar)
-	ebar = _make_hp_bar(Rect2(100, 14, 142, 30), Color("#e84b3c"))
+	lbl_turn_b = _make_label("手牌 0", 16, Color("#ffe6c8")) # 对手手牌数(头像下方)
+	lbl_turn_b.position = Vector2(2, 92)
+	lbl_turn_b.size = Vector2(92, 24)
+	lbl_turn_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_turn_b.add_theme_color_override("font_outline_color", Color("#3a2412"))
+	lbl_turn_b.add_theme_constant_override("outline_size", 3)
+	ebox.add_child(lbl_turn_b)
+	ebar = _make_hp_bar(Rect2(100, 14, 144, 30), Color("#e84b3c"))
 	ebox.add_child(ebar.root)
 	enemy_action = _make_label("等待出牌…", 14, Color("#ffe6d6"))
 	enemy_action.position = Vector2(100, 50)
-	enemy_action.size = Vector2(144, 46)
+	enemy_action.size = Vector2(146, 64)
 	enemy_action.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ebox.add_child(enemy_action)
 
 	# --- 牌架 (烘焙单排木托盘) ---
-	var rackp := _texture_rect(FIT + "rack1.png", Rect2(10, 916, 700, 138))
+	var rackp := _texture_rect(FIT + "rack1.png", Rect2(2, 916, 716, 132))
 	add_child(rackp)
 
-	# 设置按钮(齿轮)
-	var help_btn := _icon_button(AV2 + "ui/icons/icon_settings.png", Rect2(664, 14, 46, 46), _show_help)
+	# 右上角: 设置(齿轮) + 对战记录(仅对战, 查看逐回合伤害计算)
+	var help_btn := _icon_button(AV2 + "ui/icons/icon_settings.png", Rect2(666, 12, 44, 44), _show_help)
 	add_child(help_btn)
+	btn_log = _icon_button(AV2 + "ui/icons/icon_menu.png", Rect2(666, 60, 44, 44), _show_battle_log)
+	add_child(btn_log)
 
-	# 遗物图标条(顶部左侧, 点击图标看说明)
-	relic_bar = Control.new()
-	relic_bar.position = Vector2(14, 118)
-	relic_bar.size = Vector2(238, 34)
-	add_child(relic_bar)
-
-	# --- 底部玩家簇: 头像 + 我 + 我方血条 + Combo面板 ---
-	# (放在牌架之后入树, 确保头像在最上层, 不被牌架遮挡)
+	# --- 底部玩家簇 (放在牌架之后入树, 头像在最上层, 不被牌架遮挡) ---
 	# Combo面板(分数, 居中浮于毛毡下沿)
-	var combo := _texture_rect(FIT + "combo.png", Rect2(247, 820, 226, 58))
+	var combo := _texture_rect(FIT + "combo.png", Rect2(250, 816, 224, 54))
 	add_child(combo)
 	lbl_score = _make_label("0", 30, Color("#fff2c4"))
-	lbl_score.position = Vector2(76, 0)
-	lbl_score.size = Vector2(135, 58)
+	lbl_score.position = Vector2(75, 0)
+	lbl_score.size = Vector2(134, 54)
 	lbl_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_score.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl_score.add_theme_color_override("font_outline_color", Color("#6b3b0c"))
 	lbl_score.add_theme_constant_override("outline_size", 4)
 	combo.add_child(lbl_score)
-	# 玩家头像(浮于毛毡左下角, 完整可见, 不被牌架遮挡)
-	player_av = _texture_rect(AV2 + "avatars/player_adventurer_circle.png", Rect2(12, 824, 82, 82))
+	# 场面争夺: 场面倍率显示(木牌下方居中, 仅arena可见)
+	lbl_arena = _make_label("场面 ×1", 22, Color("#fff0c0"))
+	lbl_arena.position = Vector2(260, 100)
+	lbl_arena.size = Vector2(200, 28)
+	lbl_arena.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_arena.add_theme_color_override("font_outline_color", Color("#7a3b0c"))
+	lbl_arena.add_theme_constant_override("outline_size", 4)
+	lbl_arena.visible = false
+	add_child(lbl_arena)
+	# 玩家头像 + 名字 + 金币 + 血条 + 遗物条
+	player_av = _texture_rect(AV2 + "avatars/player_adventurer_circle.png", Rect2(8, 820, 82, 82))
 	add_child(player_av)
-	lbl_me = _make_label("我", 23, Color.WHITE)
-	lbl_me.position = Vector2(100, 826)
-	lbl_me.size = Vector2(120, 30)
+	lbl_me = _make_label("我", 22, Color.WHITE)
+	lbl_me.position = Vector2(96, 814)
+	lbl_me.size = Vector2(46, 26)
 	lbl_me.add_theme_color_override("font_outline_color", Color("#3a5a2e"))
 	lbl_me.add_theme_constant_override("outline_size", 4)
 	add_child(lbl_me)
-	pbar = _make_hp_bar(Rect2(100, 856, 150, 26), Color("#3cc25e"))
+	lbl_gold = _make_label("金币 0", 18, Color("#ffe08a")) # 我方金币(我方信息区)
+	lbl_gold.position = Vector2(142, 816)
+	lbl_gold.size = Vector2(110, 24)
+	lbl_gold.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl_gold.add_theme_color_override("font_outline_color", Color("#5b3a14"))
+	lbl_gold.add_theme_constant_override("outline_size", 3)
+	add_child(lbl_gold)
+	pbar = _make_hp_bar(Rect2(96, 844, 150, 22), Color("#3cc25e"))
 	add_child(pbar.root)
+	# 遗物条(技能): 移到我方血条下一排
+	relic_bar = Control.new()
+	relic_bar.position = Vector2(96, 872)
+	relic_bar.size = Vector2(566, 32)
+	add_child(relic_bar)
 
-	# --- 按钮行 (出牌/换牌/整理/撤回): 整图烘字按钮, 4个尺寸一致、文字对齐 ---
-	btn_play = _image_button("btn_play", Rect2(13, 1064, 164, 77), _on_end_turn)
+	# --- 按钮行 (出牌/换牌/整理/撤回): 整图烘字按钮 ---
+	btn_play = _image_button("btn_play", Rect2(13, 1058, 164, 77), _on_end_turn)
 	add_child(btn_play)
-	btn_exchange = _image_button("btn_hint", Rect2(190, 1064, 164, 77), _on_exchange)
+	btn_exchange = _image_button("btn_hint", Rect2(190, 1058, 164, 77), _on_exchange)
 	add_child(btn_exchange)
 	lbl_ex_count = _badge_on(btn_exchange, str(EXCHANGES_PER_FLOOR))
-	var btn_sort := _image_button("btn_sort", Rect2(367, 1064, 164, 77), _on_sort)
+	var btn_sort := _image_button("btn_sort", Rect2(367, 1058, 164, 77), _on_sort)
 	add_child(btn_sort)
-	var btn_undo := _image_button("btn_undo", Rect2(544, 1064, 164, 77), _on_undo)
+	var btn_undo := _image_button("btn_undo", Rect2(544, 1058, 164, 77), _on_undo)
 	add_child(btn_undo)
 
 	# 提示文字层
@@ -314,8 +345,8 @@ func _build_static_ui() -> void:
 
 	# 回合开始闪框(毛毡描边, 对齐 felt.png)
 	board_frame = Panel.new()
-	board_frame.position = Vector2(16, 156)
-	board_frame.size = Vector2(688, 674)
+	board_frame.position = Vector2(8, 156)
+	board_frame.size = Vector2(704, 658)
 	board_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var frame_sb := StyleBoxFlat.new()
 	frame_sb.bg_color = Color(0, 0, 0, 0)
@@ -594,6 +625,43 @@ func _show_help() -> void:
 		panel.queue_free())
 	panel.add_child(close)
 
+## 对战记录: 逐回合伤害计算明细
+func _show_battle_log() -> void:
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
+	var panel := _rounded_panel(Rect2(40, 170, 640, 840), Color("#fdf6e8"), 24)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(panel)
+	var title := _make_label("对战记录", 38, Color("#6b4a23"))
+	title.size = Vector2(640, 52)
+	title.position = Vector2(0, 24)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(title)
+	# 伤害公式说明
+	var formula := _make_label("伤害 = 基础 × 倍率\n· 基础 = 本回合新打出牌的面值合计\n· 倍率 = 1 + 0.5 × 被重组的旧牌数", 20, Color("#7a5a2e"))
+	formula.position = Vector2(36, 84)
+	formula.size = Vector2(568, 96)
+	formula.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	panel.add_child(formula)
+	var sep := _rounded_panel(Rect2(36, 188, 568, 2), Color(0.6, 0.45, 0.25, 0.5), 1)
+	panel.add_child(sep)
+	# 逐回合记录(最新在上)
+	var lines := battle_log.duplicate()
+	lines.reverse()
+	var body_text: String = "本层暂无对战记录" if lines.is_empty() else "\n".join(lines)
+	var body := _make_label(body_text, 21, Color("#4a3418"))
+	body.position = Vector2(36, 204)
+	body.size = Vector2(568, 580)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	panel.add_child(body)
+	var close := _make_button("关闭", "green", Rect2(220, 800, 200, 70))
+	close.pressed.connect(func ():
+		dim.queue_free()
+		panel.queue_free())
+	panel.add_child(close)
+
 # ---------- 桌面自动整理 ----------
 ## 结算后重排桌面: 组间留空, 顺子可延伸端留呼吸位, 对子留补位
 func _auto_layout_table(checked: Array) -> void:
@@ -673,12 +741,13 @@ func _start_floor() -> void:
 	# 木牌(层/回合)、牌库角标、底部玩家簇 + Combo 两种模式都常驻
 	var is_battle := mode != "score"
 	badge_r.visible = not is_battle      # 目标角标仅分数模式
-	lbl_turn_b.visible = is_battle       # 顶部副信息(敌手牌/金币)仅对战
 	pbar.root.visible = is_battle        # 我方血条仅对战
-	ebox.visible = is_battle             # 敌人展示区仅对战
+	ebox.visible = is_battle             # 敌人展示区(含对手手牌数)仅对战
+	btn_log.visible = is_battle          # 对战记录按钮仅对战
 	enemy_action.text = "等待出牌…"
 	# 牌库角标: 分数模式居左上; 对战模式左上让位给敌人区, 移到右上
 	badge_l.position = Vector2(492, 14) if is_battle else Vector2(14, 14)
+	battle_log.clear()                   # 清空上一层的对战记录
 	score = 0
 	turn = 1
 	exchanges_left = EXCHANGES_PER_FLOOR
@@ -812,11 +881,76 @@ func _on_tile_dropped(tile: TileNode, global_pos: Vector2) -> void:
 	tile.col = best_c
 	tile.set_new_highlight(best_zone == "table" and tile.home_zone == "rack")
 	_animate_to_slot(tile, best_zone, best_r, best_c)
+	_refresh_arena_meter() # 场面争夺: 拖拽后实时刷新场面倍率
 
 func _animate_to_slot(tile: TileNode, zone: String, r: int, c: int) -> void:
 	var tw := create_tween()
 	tw.tween_property(tile, "position", _slot_pos(zone, r, c), 0.12) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+# ============================================================
+# 场面争夺 (arena) — 复用对战框架, 仅替换我方算分
+# ============================================================
+## 牌型分: 对子1 / 刻子2 / 三连2 / 四连4 / 五连5 / 六连6 / 七连7
+func _shape_score(kind: String, n: int) -> int:
+	if kind == "run":
+		if n <= 3: return 2
+		elif n == 4: return 4
+		elif n == 5: return 5
+		elif n == 6: return 6
+		return 7
+	elif kind == "group":
+		return 2
+	elif kind == "pair":
+		return 1
+	return 0
+
+## 当前场面牌型分之和 S(用于实时倍率显示)
+func _board_shape_value() -> int:
+	var s := 0
+	for g in _parse_table_groups():
+		var defs: Array = []
+		for t in g:
+			defs.append(t.def)
+		var res := Rules.check_set(defs)
+		if res.valid:
+			s += _shape_score(res.kind, g.size())
+	return s
+
+## 结算: 出牌张数 k × (1 + 场面牌型分 S), 然后"结算即消耗"
+func _arena_settle(checked: Array, k: int) -> int:
+	var s := 0
+	for entry in checked:
+		s += _shape_score(entry.res.kind, entry.tiles.size())
+	var gained: int = k * (1 + s)
+	score += gained
+	battle_log.append("第%d回合 · 我方  出%d张 × (1+场面%d) = %d 伤害" % [turn, k, s, gained])
+	_show_score_pop("%d × %d = %d!" % [k, 1 + s, gained])
+	_arena_consume(checked)
+	return gained
+
+## 结算即消耗: 把"含本回合新牌"的链从场面清走(放电清场), 释放格位
+func _arena_consume(checked: Array) -> void:
+	for entry in checked:
+		var touched := false
+		for t in entry.tiles:
+			if t.is_new:
+				touched = true
+				break
+		if not touched:
+			continue
+		for t in entry.tiles:
+			if t.zone == "table" and table_grid[t.row][t.col] == t:
+				table_grid[t.row][t.col] = null
+			t.queue_free()
+
+## 场面倍率显示(随拖拽实时刷新)
+func _refresh_arena_meter() -> void:
+	if lbl_arena == null:
+		return
+	lbl_arena.visible = arena_mode
+	if arena_mode:
+		lbl_arena.text = "场面 ×%d" % (1 + _board_shape_value())
 
 # ---------- 回合结算 ----------
 func _on_end_turn() -> void:
@@ -868,6 +1002,9 @@ func _on_end_turn() -> void:
 	var turn_gain := 0
 	if new_count == 0:
 		_toast("本回合未出牌, 摸1张")
+	elif arena_mode:
+		# 场面争夺: 出牌张数 × (1+场面牌型分), 结算即消耗
+		turn_gain = _arena_settle(checked, new_count)
 	else:
 		# chips: 各牌组新牌面值经遗物修正后求和 (+回收商存入的返还)
 		var chips := next_chips_bonus
@@ -926,6 +1063,11 @@ func _on_end_turn() -> void:
 		var gained := int(round(chips * mult))
 		score += gained
 		turn_gain = gained
+		# 记入对战记录(伤害计算)
+		if reorg > 0:
+			battle_log.append("第%d回合 · 我方  基础 %d × 倍率 %.1f (重组 %d 张) = %d 伤害" % [turn, chips, mult, reorg, gained])
+		else:
+			battle_log.append("第%d回合 · 我方  打出 %d 点 (无重组, 倍率 1.0)" % [turn, gained])
 		# 结算可视化: 重组连击逐张点亮(×1×2×3…) → 倍率横幅 → 公式大字 + 新牌脉冲
 		await _play_reorg_combo(reorg_tiles, mult)
 		if reorg > 0:
@@ -944,8 +1086,9 @@ func _on_end_turn() -> void:
 				t.home_zone = "table"
 				t.set_new_highlight(false)
 
-	# 自动整理桌面: 组间留空, 顺子留头尾呼吸位, 对子留补位
-	_auto_layout_table(checked)
+	# 自动整理桌面: 组间留空, 顺子留头尾呼吸位, 对子留补位 (场面争夺已自行清场)
+	if not arena_mode:
+		_auto_layout_table(checked)
 
 	# 空手奖励 (对战/教程计入伤害, 分数模式计入得分)
 	if _rack_count() == 0:
@@ -1138,8 +1281,10 @@ func _ai_turn() -> bool:
 		if r_ai > 0:
 			enemy_action.text = "重组突袭! %d×%.1f=%d伤害!" % [dmg, mult_ai, dmg_total]
 			_show_score_pop("敌方 %d × %.1f = %d!" % [dmg, mult_ai, dmg_total])
+			battle_log.append("第%d回合 · 对手  基础 %d × 倍率 %.1f (重组 %d 张) = %d 伤害" % [turn, dmg, mult_ai, r_ai, dmg_total])
 		else:
 			enemy_action.text = "出牌%d张, 造成%d伤害!" % [played, dmg_total]
+			battle_log.append("第%d回合 · 对手  出牌 %d 张, 造成 %d 伤害" % [turn, played, dmg_total])
 		_shake(pbar.root)
 	elif played > 0:
 		enemy_action.text = "打出对子, 蓄势中"
@@ -1383,19 +1528,21 @@ func _restore_snapshot() -> void:
 
 # ---------- HUD / 结算 ----------
 func _update_hud() -> void:
-	# 木牌(层/回合)、Combo分数、牌库角标 两种模式都刷新
+	# 木牌(层/回合)、Combo分数、牌库角标、金币 两种模式都刷新
 	lbl_score.text = "%d" % score
 	lbl_deck.text = "%d" % deck.size()
+	lbl_gold.text = "金币 %d" % gold        # 我方金币(我方信息区)
 	if mode != "score":
 		lbl_turn.text = "第%d层 回合%d" % [floor_num, turn]
 		_update_bar(pbar, "我方", player_hp, PLAYER_MAX_HP)
 		var ename: String = "对手" if mode == "tutorial" else String(_ai_cfg().name)
 		_update_bar(ebar, ename, enemy_hp, _battle_max())
-		lbl_turn_b.text = "敌手 %d · 金币 %d" % [enemy_hand.size(), gold]
+		lbl_turn_b.text = "手牌 %d" % enemy_hand.size()   # 对手手牌数(头像下方)
 	else:
 		lbl_turn.text = "第%d层 %d/%d" % [floor_num, turn, MAX_TURNS]
 		lbl_target.text = "目标 %d" % _floor_target()
 	lbl_ex_count.text = str(exchanges_left)
+	_refresh_arena_meter() # 场面争夺: 同步场面倍率显示
 
 # ---------- 层间商店 ----------
 var _shop_cards_box: Control
@@ -1741,6 +1888,7 @@ func _tut_ai_turn(step: int) -> void:
 	if dmg > 0:
 		player_hp -= dmg
 		enemy_action.text = "出牌, 造成%d伤害!" % dmg
+		battle_log.append("第%d回合 · 对手  打出 %d 伤害" % [turn, dmg])
 		_shake(pbar.root)
 	_update_hud()
 

@@ -23,10 +23,11 @@ def nine(src,W,H,sl,st,sr,sb,tl,tt,tr,tb):
     return out
 
 # ---------- 几何(与 main.gd 对齐) ----------
-TW,TH,SX,SY=70,100,75,106
-COLS,ROWS=9,6; PADX,PADY=15,28
-grid_w=(COLS-1)*SX+TW; grid_h=(ROWS-1)*SY+TH        # 670 x 630
-felt_w=grid_w+2*PADX; felt_h=grid_h+2*PADY           # 700 x 686
+# v5: 略缩卡牌、网格更深地内收进毛毡绿区(四周留更大边距, 不再贴边/压叶子)
+TW,TH,SX,SY=66,94,73,100
+COLS,ROWS=9,6; PADX,PADY=33,38
+grid_w=(COLS-1)*SX+TW; grid_h=(ROWS-1)*SY+TH        # 650 x 594
+felt_w=grid_w+2*PADX; felt_h=grid_h+2*PADY           # 716 x 670
 
 # felt.png = 毛毡(九宫格留叶角) + 格位
 felt=nine(crop_opaque(load("board/table_felt.png")),felt_w,felt_h,165,150,165,150,165,150,165,150)
