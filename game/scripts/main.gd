@@ -851,39 +851,103 @@ func _on_tile_picked(tile: TileNode) -> void:
 
 func _on_tile_dropped(tile: TileNode, global_pos: Vector2) -> void:
 	var center: Vector2 = global_pos + TILE_SIZE / 2.0
-	var best_zone := ""
-	var best_r := -1
-	var best_c := -1
-	var best_dist := DROP_RADIUS
 	var zones: Array = ["table"] if tile.home_zone == "table" else ["table", "rack"]
+	# 找最近的目标格(空或占用都行), 用更大的吸附半径 → 更"磁性"
+	var snap := DROP_RADIUS + 26.0
+	var tz := ""
+	var tr := -1
+	var tc := -1
+	var td := snap
 	for z in zones:
-		var grid := _grid_of(z)
 		var rows: int = TABLE_ROWS if z == "table" else RACK_ROWS
 		var cols: int = TABLE_COLS if z == "table" else RACK_COLS
 		for r in rows:
 			for c in cols:
-				var occupied = grid[r][c]
-				if occupied != null and occupied != tile:
-					continue
-				var slot_center: Vector2 = _slot_pos(z, r, c) + TILE_SIZE / 2.0
-				var d := center.distance_to(slot_center)
-				if d < best_dist:
-					best_dist = d
-					best_zone = z
-					best_r = r
-					best_c = c
-	if best_zone == "":
+				var sc: Vector2 = _slot_pos(z, r, c) + TILE_SIZE / 2.0
+				var d := center.distance_to(sc)
+				if d < td:
+					td = d
+					tz = z
+					tr = r
+					tc = c
+	if tz == "":
 		_animate_to_slot(tile, tile.zone, tile.row, tile.col) # 弹回原位
 		return
-	# 落位
-	_grid_of(tile.zone)[tile.row][tile.col] = null
-	_grid_of(best_zone)[best_r][best_c] = tile
-	tile.zone = best_zone
-	tile.row = best_r
-	tile.col = best_c
-	tile.set_new_highlight(best_zone == "table" and tile.home_zone == "rack")
-	_animate_to_slot(tile, best_zone, best_r, best_c)
+	var grid := _grid_of(tz)
+	var occ = grid[tr][tc]
+	_grid_of(tile.zone)[tile.row][tile.col] = null # 先清原位
+	if occ != null and occ != tile:
+		# 目标被占 → 行内自动腾位(吸附+重排); 腾不出则退到最近空位
+		if not _row_make_room(tz, tr, tc):
+			var fb := _nearest_empty_slot(tile, center, snap)
+			if fb.is_empty():
+				_grid_of(tile.zone)[tile.row][tile.col] = tile # 还原
+				_animate_to_slot(tile, tile.zone, tile.row, tile.col)
+				return
+			tz = fb.z
+			tr = fb.r
+			tc = fb.c
+			grid = _grid_of(tz)
+	grid[tr][tc] = tile
+	tile.zone = tz
+	tile.row = tr
+	tile.col = tc
+	tile.set_new_highlight(tz == "table" and tile.home_zone == "rack")
+	_animate_to_slot(tile, tz, tr, tc)
 	_refresh_arena_meter() # 场面争夺: 拖拽后实时刷新场面倍率
+
+## 行内腾位: 把目标格 (r,c) 旁边的牌朝最近空位推一格, 空出该格 (自动重排)
+func _row_make_room(zone: String, r: int, c: int) -> bool:
+	var grid := _grid_of(zone)
+	var cols: int = TABLE_COLS if zone == "table" else RACK_COLS
+	var er := -1
+	for cc in range(c + 1, cols):
+		if grid[r][cc] == null:
+			er = cc
+			break
+	var el := -1
+	for cc in range(c - 1, -1, -1):
+		if grid[r][cc] == null:
+			el = cc
+			break
+	if er < 0 and el < 0:
+		return false
+	var use_right: bool = er >= 0 and (el < 0 or (er - c) <= (c - el))
+	if use_right:
+		for cc in range(er, c, -1):
+			var t: TileNode = grid[r][cc - 1]
+			grid[r][cc] = t
+			if t != null:
+				t.col = cc
+				_animate_to_slot(t, zone, r, cc)
+	else:
+		for cc in range(el, c):
+			var t: TileNode = grid[r][cc + 1]
+			grid[r][cc] = t
+			if t != null:
+				t.col = cc
+				_animate_to_slot(t, zone, r, cc)
+	grid[r][c] = null
+	return true
+
+## 最近空位(腾位失败时的退路)
+func _nearest_empty_slot(tile: TileNode, center: Vector2, radius: float) -> Dictionary:
+	var zones: Array = ["table"] if tile.home_zone == "table" else ["table", "rack"]
+	var best := {}
+	var bd := radius
+	for z in zones:
+		var rows: int = TABLE_ROWS if z == "table" else RACK_ROWS
+		var cols: int = TABLE_COLS if z == "table" else RACK_COLS
+		for r in rows:
+			for c in cols:
+				if _grid_of(z)[r][c] != null:
+					continue
+				var sc: Vector2 = _slot_pos(z, r, c) + TILE_SIZE / 2.0
+				var d := center.distance_to(sc)
+				if d < bd:
+					bd = d
+					best = {"z": z, "r": r, "c": c}
+	return best
 
 func _animate_to_slot(tile: TileNode, zone: String, r: int, c: int) -> void:
 	var tw := create_tween()
@@ -924,19 +988,23 @@ func _chain_fresh(tiles: Array, sig: Array) -> bool:
 			return true
 	return false
 
-## 结算: 出牌张数 k × (1 + 新鲜链牌型分 S)。"消耗"= 把刚领的链标记为已领(牌不动)。
-func _arena_settle(checked: Array, k: int) -> int:
-	var s := 0
-	var harvested: Array = [] # [tiles, sig] 本次领到倍率的新鲜链
+## 结算: 基础(本回合出牌面值和) × 倍率(各"新鲜链"牌型分和)。"消耗"= 把刚领的链标记为已领(牌不动)。
+func _arena_settle(checked: Array, _k: int) -> int:
+	var base := 0  # 本回合从手里打出的牌面值之和
+	var s := 0     # 新鲜链(本回合改变了组成的链)牌型分之和 = 倍率
+	var harvested: Array = [] # [tiles, sig]
 	for entry in checked:
+		for i in entry.tiles.size():
+			if entry.tiles[i].is_new:
+				base += int(entry.res.values[i])
 		var sig := _chain_sig(entry.tiles)
 		if _chain_fresh(entry.tiles, sig):
 			s += _shape_score(entry.res.kind, entry.tiles.size())
 			harvested.append([entry.tiles, sig])
-	var gained: int = k * (1 + s)
+	var gained: int = base * s
 	score += gained
-	battle_log.append("第%d回合 · 我方  出%d张 × (1+新鲜场面%d) = %d 伤害" % [turn, k, s, gained])
-	_show_score_pop("%d × %d = %d!" % [k, 1 + s, gained])
+	battle_log.append("第%d回合 · 我方  基础 %d × 倍率 %d = %d 伤害" % [turn, base, s, gained])
+	_show_score_pop("%d × %d = %d!" % [base, s, gained])
 	# 消耗: 这些链倍率已领 → 记录其当前组成; 牌留在桌面, 重排成别的链后会重新新鲜
 	for h in harvested:
 		for t in h[0]:
@@ -969,7 +1037,7 @@ func _refresh_arena_meter() -> void:
 		else:
 			for t in g:
 				t.modulate = Color(0.66, 0.66, 0.72) # 已领: 倍率为0, 需重排
-	lbl_arena.text = "场面 ×%d" % (1 + s)
+	lbl_arena.text = "场面倍率 ×%d" % s
 
 # ---------- 回合结算 ----------
 func _on_end_turn() -> void:
