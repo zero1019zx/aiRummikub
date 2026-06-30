@@ -60,6 +60,7 @@ var relic_mgr := RelicManager.new()
 var mode := "score" # "score" 分数挑战 / "battle" 对战原型
 var arena_mode := false # 场面争夺: 复用对战框架, 仅替换我方算分(出牌张数×(1+场面牌型分))
 var lbl_arena: Label # 场面倍率显示
+var arena_tags: Control # 牌面动态指引层(每组牌型+倍率标签)
 var arena_scored := {} # uid -> 上次领取倍率时该链的组成签名(面值多重集); 牌不动, 链改组后倍率重新生效
 var player_hp := PLAYER_MAX_HP
 var enemy_hp := 0
@@ -343,6 +344,12 @@ func _build_static_ui() -> void:
 	tiles_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	tiles_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(tiles_layer)
+
+	# 场面争夺: 牌面动态指引层(每组牌型+倍率标签, 置于牌之上)
+	arena_tags = Control.new()
+	arena_tags.set_anchors_preset(Control.PRESET_FULL_RECT)
+	arena_tags.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(arena_tags)
 
 	# 回合开始闪框(毛毡描边, 对齐 felt.png)
 	board_frame = Panel.new()
@@ -1011,11 +1018,14 @@ func _arena_settle(checked: Array, _k: int) -> int:
 			arena_scored[t.uid] = h[1]
 	return gained
 
-## 场面倍率显示(随拖拽实时刷新) + 已领链暗淡提示
+## 场面倍率显示 + 牌面动态指引(每组牌型/倍率标签) + 已领链暗淡, 随拖拽实时刷新
 func _refresh_arena_meter() -> void:
 	if lbl_arena == null:
 		return
 	lbl_arena.visible = arena_mode
+	if arena_tags != null:
+		for child in arena_tags.get_children():
+			child.queue_free()
 	if not arena_mode:
 		return
 	# 先全部复原, 再把"已领链"(倍率已消耗)调暗, 提示需要重排才能再生效
@@ -1026,17 +1036,31 @@ func _refresh_arena_meter() -> void:
 	var s := 0
 	for g in _parse_table_groups():
 		var defs: Array = []
+		var minc := 999
+		var gr := 0
 		for t in g:
 			defs.append(t.def)
+			if t.col < minc:
+				minc = t.col
+				gr = t.row
 		var res := Rules.check_set(defs)
 		if not res.valid:
 			continue
-		var sig := _chain_sig(g)
-		if _chain_fresh(g, sig):
-			s += _shape_score(res.kind, g.size())
+		var fresh := _chain_fresh(g, _chain_sig(g))
+		var shp := _shape_score(res.kind, g.size())
+		if fresh:
+			s += shp
 		else:
 			for t in g:
 				t.modulate = Color(0.66, 0.66, 0.72) # 已领: 倍率为0, 需重排
+		# 牌面动态指引: 该组上方显示 牌型 + 倍率(新鲜) / 旧·0
+		var kname: String = ("%d连" % g.size()) if res.kind == "run" else ("刻子" if res.kind == "group" else "对子")
+		var tag := _make_label(kname + (" ×%d" % shp if fresh else " 旧·0"), 15, Color("#fff2c0") if fresh else Color("#c9ccc4"))
+		tag.add_theme_color_override("font_outline_color", Color("#1f3a26"))
+		tag.add_theme_constant_override("outline_size", 4)
+		tag.size = Vector2(90, 20)
+		tag.position = _slot_pos("table", gr, minc) + Vector2(2, -19)
+		arena_tags.add_child(tag)
 	lbl_arena.text = "场面倍率 ×%d" % s
 
 # ---------- 回合结算 ----------
