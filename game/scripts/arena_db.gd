@@ -19,23 +19,40 @@ var errors: Array = []          # 加载/校验问题, 便于开发期排查
 
 func load_all() -> bool:
 	errors.clear()
-	balance = _load_json("arena_balance.json", {})
-	bosses = _load_json("bosses.json", {}).get("bosses", [])
-	relics = _load_json("relics.json", {}).get("relics", [])
-	skills = _load_json("skills.json", {}).get("skills", [])
+	balance = _dict(_load_json("arena_balance.json", {}))
+	bosses = _arr(_load_json("bosses.json", {}), "bosses")
+	relics = _arr(_load_json("relics.json", {}), "relics")
+	skills = _arr(_load_json("skills.json", {}), "skills")
 	_index()
 	_validate()
+	if errors.is_empty():
+		print("ArenaDB OK: bosses=%d relics=%d skills=%d" % [bosses.size(), relics.size(), skills.size()])
+	else:
+		push_warning("ArenaDB 加载问题: " + str(errors))
 	return errors.is_empty()
 
-func _load_json(fname: String, fallback) :
+func _dict(v) -> Dictionary:
+	if v is Dictionary:
+		var d: Dictionary = v
+		return d
+	return {}
+
+func _arr(v, key: String) -> Array:
+	if v is Dictionary and v.has(key) and v[key] is Array:
+		var a: Array = v[key]
+		return a
+	return []
+
+func _load_json(fname: String, fallback):
 	var path := DATA_DIR + fname
-	if not FileAccess.file_exists(path):
-		errors.append("缺文件: " + path)
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		errors.append("打不开 %s (err %d)" % [fname, FileAccess.get_open_error()])
 		return fallback
-	var txt := FileAccess.get_file_as_string(path)
+	var txt := f.get_as_text()
 	var data = JSON.parse_string(txt)
 	if data == null:
-		errors.append("JSON解析失败: " + fname)
+		errors.append("%s 解析失败(JSON)" % fname)
 		return fallback
 	return data
 
@@ -54,7 +71,12 @@ func _index() -> void:
 func bosses_for_layer(layer: int, role := "") -> Array:
 	var out: Array = []
 	for b in bosses:
-		if b.get("layers", []).has(layer) and (role == "" or b.get("role", "") == role):
+		var hit := false
+		for L in b.get("layers", []):
+			if int(L) == layer:   # 兼容JSON把数字解析成float的情况
+				hit = true
+				break
+		if hit and (role == "" or String(b.get("role", "")) == role):
 			out.append(b)
 	return out
 

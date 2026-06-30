@@ -807,17 +807,30 @@ func _start_floor() -> void:
 		if mode == "battle":
 			enemy_hand = []
 			if arena_mode and _arena_setup_boss():
-				# 场面争夺: boss来自 bosses.json; 玩家血/回复来自 arena_balance.json; boss不在共享桌上打牌
+				# 场面争夺: boss血量/阶段/机制来自bosses.json; 玩家血/回复/补牌来自arena_balance.json。
+				# boss仍在共享桌上打牌(展示+可被你重组吃倍率), 伤害用base×mult; 你→boss的伤害过阶段门+机制整形。
 				player_hp = _player_max()
 				enemy_hp = _arena_boss_maxhp()
 				enemy_action.text = String(arena_boss.get("intent", "等待出牌…"))
+				_toast("Boss: %s · %d血 · %d阶段" % [String(arena_boss.get("name", "?")), enemy_hp, int(arena_boss.get("phases", []).size())])
 			else:
-				# 普通对战(或arena资产缺失时的回退): 沿用原逻辑, AI摸8张在共享桌上对抗
+				# 普通对战(或arena资产缺失时的回退): 沿用原逻辑
 				player_hp = PLAYER_MAX_HP
 				enemy_hp = _battle_max()
-				for _i in HAND_START:
-					if deck.size() > 0:
-						enemy_hand.append(deck.pop_back())
+				if arena_mode:
+					var emsg := "⚠场面争夺未加载"
+					if arena_db != null:
+						emsg += " (bosses=%d)" % arena_db.bosses.size()
+						if not arena_db.errors.is_empty():
+							emsg += " | " + String(arena_db.errors[0])
+					else:
+						emsg += " (db=nil)"
+					enemy_action.text = emsg   # 持久显示在敌人区, 方便读全
+					_toast(emsg)
+					push_warning(emsg)
+			for _i in HAND_START:
+				if deck.size() > 0:
+					enemy_hand.append(deck.pop_back())
 	_take_snapshot()
 	_update_hud()
 	_flash_turn_frame()
@@ -913,6 +926,7 @@ func _on_tile_dropped(tile: TileNode, global_pos: Vector2) -> void:
 	tile.col = tc
 	tile.set_new_highlight(tz == "table" and tile.home_zone == "rack")
 	_animate_to_slot(tile, tz, tr, tc)
+	_table_smart_join(tile)   # issue4: 智能合并+升序重排(降低精细拖拽要求)
 	_refresh_arena_meter() # 场面争夺: 拖拽后实时刷新场面倍率
 
 ## 行内腾位: 把目标格 (r,c) 旁边的牌朝最近空位推一格, 空出该格 (自动重排)
@@ -972,6 +986,63 @@ func _animate_to_slot(tile: TileNode, zone: String, r: int, c: int) -> void:
 	var tw := create_tween()
 	tw.tween_property(tile, "position", _slot_pos(zone, r, c), 0.12) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+## issue4: 智能合并+升序重排。把拖到牌组附近(同行, 含跨1个空位)的同色/同值牌, 自动并入该组、
+## 升序排好并压实, 仅当排序后能组成合法牌组(顺子/刻子/对子)时才生效, 否则不动 → 降低精细拖拽。
+## 仅 arena_mode 生效, 且对计分用的"面值多重集"无影响, 不破坏其它模式。
+func _table_smart_join(tile: TileNode) -> void:
+	if not arena_mode or tile.zone != "table" or tile.def.joker:
+		return
+	var r := tile.row
+	var members: Array = [tile]
+	for dir: int in [-1, 1]:
+		var cc := int(tile.col) + dir
+		var gap := 0
+		while cc >= 0 and cc < TABLE_COLS:
+			var t = table_grid[r][cc]
+			if t == null:
+				gap += 1
+				if gap > 1:
+					break
+				cc += dir
+				continue
+			if t.def.joker:
+				break
+			if int(t.def.color) == int(tile.def.color) or int(t.def.num) == int(tile.def.num):
+				members.append(t)
+				gap = 0
+				cc += dir
+			else:
+				break
+	if members.size() < 2:
+		return
+	members.sort_custom(func(a, b): return (int(a.def.num) * 10 + int(a.def.color)) < (int(b.def.num) * 10 + int(b.def.color)))
+	var defs: Array = []
+	for t in members:
+		defs.append(t.def)
+	if not Rules.check_set(defs).valid:
+		return  # 排序后不是合法牌组 → 不强行合并
+	var start := TABLE_COLS
+	for t in members:
+		start = min(start, int(t.col))
+	if start + members.size() > TABLE_COLS:
+		start = TABLE_COLS - members.size()
+	if start < 0:
+		return
+	for ci in range(start, start + members.size()):
+		var occ = table_grid[r][ci]
+		if occ != null and not members.has(occ):
+			return  # 目标范围内有非成员牌 → 保守放弃
+	for t in members:
+		table_grid[t.row][t.col] = null
+	var col := start
+	for t in members:
+		table_grid[r][col] = t
+		t.zone = "table"
+		t.row = r
+		t.col = col
+		_animate_to_slot(t, "table", r, col)
+		col += 1
 
 # ============================================================
 # 场面争夺 (arena) — 复用对战框架, 仅替换我方算分
@@ -1048,6 +1119,8 @@ func _arena_setup_boss() -> bool:
 	_ensure_arena_db()
 	if arena_db == null:
 		return false
+	if arena_db.bosses.is_empty():
+		arena_db.load_all()   # 重试加载(防首次文件系统扫描时序问题)
 	var cands := arena_db.bosses_for_layer(floor_num)
 	if cands.is_empty():
 		return false
@@ -1117,24 +1190,22 @@ func _arena_deal_to_boss(raw: int) -> Array:
 	enemy_hp -= eff
 	if arena_phase < phs.size() - 1 and enemy_hp <= floorv:
 		arena_phase += 1   # 进入下一阶段(阶段门保证此击不溢出到下一段)
+		var plabel := String(phs[arena_phase].get("label", ""))
+		if plabel != "":
+			_toast("%s 进入新阶段: %s" % [String(arena_boss.get("name", "Boss")), plabel])  # boss能力切换提示
 	return [eff, reflect]
 
-## 步骤2 Boss回合: 造成当前阶段固定威胁(不在共享桌上打牌); 玩家定额回复在外层处理。返回是否存活。
-func _arena_boss_turn() -> bool:
-	var threat := relic_mgr.modify_enemy_damage(_arena_cur_threat())
-	var bname: String = String(arena_boss.get("name", "Boss"))
-	if threat > 0:
-		player_hp -= threat
-		enemy_action.text = "%s 出手, 造成 %d 伤害!" % [bname, threat]
-		battle_log.append("第%d回合 · %s 造成 %d 伤害" % [turn, bname, threat])
-		_shake(pbar.root)
-	_update_hud()
-	if player_hp <= 0:
-		player_hp = 0
-		_update_hud()
-		_show_floor_result(false)
-		return false
-	return true
+## issue5: 把当前桌面所有合法链标记为"已结算"(置灰, 倍率0)。boss出完牌后调用 →
+## boss铺的牌与玩家结算后的牌状态一致; 你需重排它们才能再吃倍率(核心"重组对手牌"玩法)。
+func _arena_mark_all_scored() -> void:
+	for g in _parse_table_groups():
+		var defs: Array = []
+		for t in g:
+			defs.append(t.def)
+		if Rules.check_set(defs).valid:
+			var sg := _chain_sig(g)
+			for t in g:
+				arena_scored[t.uid] = sg
 
 ## 场面倍率显示 + 牌面动态指引(每组牌型/倍率标签) + 已领链暗淡, 随拖拽实时刷新
 func _refresh_arena_meter() -> void:
@@ -1170,15 +1241,36 @@ func _refresh_arena_meter() -> void:
 			s += shp
 		else:
 			for t in g:
-				t.modulate = Color(0.66, 0.66, 0.72) # 已领: 倍率为0, 需重排
-		# 牌面动态指引: 该组上方显示 牌型 + 倍率(新鲜) / 旧·0
+				t.modulate = Color(0.66, 0.66, 0.72) # 已结算: 倍率0, 需重排
+		# issue3: 用一个外框把整条链套起来 + 顶部标签。新鲜=金框, 已结算=灰框
+		var gcol := Color("#ffd24a") if fresh else Color("#9aa0a8")
+		var maxc: int = minc + g.size() - 1
+		var box := Panel.new()
+		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.position = _slot_pos("table", gr, minc) + Vector2(-4, -4)
+		box.size = Vector2((maxc - minc) * SX + TILE_SIZE.x + 8, TILE_SIZE.y + 8)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(gcol.r, gcol.g, gcol.b, 0.12)
+		sb.set_border_width_all(3)
+		sb.border_color = gcol
+		sb.set_corner_radius_all(12)
+		box.add_theme_stylebox_override("panel", sb)
+		arena_tags.add_child(box)
 		var kname: String = ("%d连" % g.size()) if res.kind == "run" else ("刻子" if res.kind == "group" else "对子")
-		var tag := _make_label(kname + (" ×%d" % shp if fresh else " 旧·0"), 15, Color("#fff2c0") if fresh else Color("#c9ccc4"))
-		tag.add_theme_color_override("font_outline_color", Color("#1f3a26"))
-		tag.add_theme_constant_override("outline_size", 4)
-		tag.size = Vector2(90, 20)
-		tag.position = _slot_pos("table", gr, minc) + Vector2(2, -19)
-		arena_tags.add_child(tag)
+		var pill := Panel.new()
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pill.size = Vector2(84, 23)
+		pill.position = _slot_pos("table", gr, minc) + Vector2(-2, -24)
+		var psb := StyleBoxFlat.new()
+		psb.bg_color = gcol
+		psb.set_corner_radius_all(9)
+		pill.add_theme_stylebox_override("panel", psb)
+		arena_tags.add_child(pill)
+		var tag := _make_label(kname + (" ×%d" % shp if fresh else " 已结算"), 14, Color("#3a2a10") if fresh else Color("#ffffff"))
+		tag.size = Vector2(84, 23)
+		tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		pill.add_child(tag)
 	lbl_arena.text = "场面倍率 ×%d" % s
 
 # ---------- 回合结算 ----------
@@ -1374,16 +1466,14 @@ func _on_end_turn() -> void:
 		var alive := true
 		if mode == "tutorial":
 			alive = await _tut_after_submit()
-		elif _arena_active():
-			await get_tree().create_timer(0.45).timeout
-			alive = _arena_boss_turn()
 		else:
 			await get_tree().create_timer(0.45).timeout
-			alive = await _ai_turn()
+			alive = await _ai_turn()   # arena的boss也走此路径在共享桌上打牌
 		if not alive:
 			busy = false
 			return
 		if _arena_active():
+			_arena_mark_all_scored()   # issue5: boss出的牌结算后置灰(与正常结算牌同状态)
 			player_hp = min(_player_max(), player_hp + _arena_regen())   # 定额回复(非回满)
 			_update_hud()
 		turn += 1
@@ -1532,24 +1622,46 @@ func _ai_turn() -> bool:
 				_toast("烟雾弹生效, 敌方摸牌落空!")
 			else:
 				enemy_hand.append(deck.pop_back())
-	# 伤害 = chips × (1 + 0.5×AI重组数), 与玩家同一公式
-	var mult_ai := 1.0 + 0.5 * r_ai
-	var dmg_total := int(round(dmg * mult_ai))
-	dmg_total = relic_mgr.modify_enemy_damage(dmg_total)
-	if dmg_total > 0:
-		player_hp -= dmg_total
-		if r_ai > 0:
-			enemy_action.text = "重组突袭! %d×%.1f=%d伤害!" % [dmg, mult_ai, dmg_total]
-			_show_score_pop("敌方 %d × %.1f = %d!" % [dmg, mult_ai, dmg_total])
-			battle_log.append("第%d回合 · 对手  基础 %d × 倍率 %.1f (重组 %d 张) = %d 伤害" % [turn, dmg, mult_ai, r_ai, dmg_total])
+	# 伤害: 场面争夺 boss 也用 base×mult(与玩家同一套公式); 普通对战仍用 chips×(1+0.5×重组)
+	var dmg_total := 0
+	if _arena_active():
+		var bmult := 0
+		for gg in _parse_table_groups():
+			var dfs: Array = []
+			for t in gg:
+				dfs.append(t.def)
+			var rr := Rules.check_set(dfs)
+			if rr.valid and _chain_fresh(gg, _chain_sig(gg)):
+				bmult += _shape_score(rr.kind, gg.size())
+		dmg_total = relic_mgr.modify_enemy_damage(dmg * bmult)   # base=boss本回合出牌面值和 × mult=新鲜链牌型分和
+		var nm := String(arena_boss.get("name", "对手"))
+		if dmg_total > 0:
+			player_hp -= dmg_total
+			enemy_action.text = "%s: %d×%d=%d 伤害!" % [nm, dmg, bmult, dmg_total]
+			_show_score_pop("%s %d × %d = %d!" % [nm, dmg, bmult, dmg_total])
+			battle_log.append("第%d回合 · %s  基础 %d × 倍率 %d = %d 伤害" % [turn, nm, dmg, bmult, dmg_total])
+			_shake(pbar.root)
+		elif played > 0:
+			enemy_action.text = "%s 出牌但未成新链" % nm
 		else:
-			enemy_action.text = "出牌%d张, 造成%d伤害!" % [played, dmg_total]
-			battle_log.append("第%d回合 · 对手  出牌 %d 张, 造成 %d 伤害" % [turn, played, dmg_total])
-		_shake(pbar.root)
-	elif played > 0:
-		enemy_action.text = "打出对子, 蓄势中"
+			enemy_action.text = "%s 无牌可出, 摸牌休整" % nm
 	else:
-		enemy_action.text = "无牌可出, 摸牌休整"
+		var mult_ai := 1.0 + 0.5 * r_ai
+		dmg_total = relic_mgr.modify_enemy_damage(int(round(dmg * mult_ai)))
+		if dmg_total > 0:
+			player_hp -= dmg_total
+			if r_ai > 0:
+				enemy_action.text = "重组突袭! %d×%.1f=%d伤害!" % [dmg, mult_ai, dmg_total]
+				_show_score_pop("敌方 %d × %.1f = %d!" % [dmg, mult_ai, dmg_total])
+				battle_log.append("第%d回合 · 对手  基础 %d × 倍率 %.1f (重组 %d 张) = %d 伤害" % [turn, dmg, mult_ai, r_ai, dmg_total])
+			else:
+				enemy_action.text = "出牌%d张, 造成%d伤害!" % [played, dmg_total]
+				battle_log.append("第%d回合 · 对手  出牌 %d 张, 造成 %d 伤害" % [turn, played, dmg_total])
+			_shake(pbar.root)
+		elif played > 0:
+			enemy_action.text = "打出对子, 蓄势中"
+		else:
+			enemy_action.text = "无牌可出, 摸牌休整"
 	# 意图预告(按其手牌预演下回合)
 	var groups3 := _parse_table_groups()
 	var ginfo3: Array = []
@@ -1746,6 +1858,7 @@ func _on_undo() -> void:
 		_toast("教程中暂不可用")
 		return
 	_restore_snapshot()
+	_refresh_arena_meter()   # issue2: 撤回后刷新牌型标记, 否则残留旧标记
 	_toast("已撤回到回合开始")
 
 func _take_snapshot() -> void:
