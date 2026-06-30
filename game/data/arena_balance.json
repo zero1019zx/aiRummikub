@@ -1,0 +1,31 @@
+{
+  "_doc": "场面争夺 全局平衡常量。改这里 = 调整全局节奏, 不用动代码。数值依据 outputs/arena_*_sim.py 模拟。",
+  "schema_version": 1,
+  "player": {
+    "max_hp": 80,
+    "start_hand": 8,
+    "hand_cap": 10,
+    "draw_per_turn": 2,
+    "regen_per_turn": 12,
+    "regen_mode": "fixed"
+  },
+  "scoring": {
+    "_doc": "伤害 = base(本回合出牌面值和) × mult(本回合新鲜链牌型分和)。",
+    "shape_score": {"pair": 1, "group": 2, "run3": 2, "run4": 4, "run5": 5, "run6": 6, "run7": 7},
+    "mult_floor": 1,
+    "fresh_rule": "recompose"
+  },
+  "anti_oneshot": {
+    "_doc": "用阶段门替代被否决的全局软上限: 单击伤害不跨血量阈值溢出, 强制最少=阶段数 回合。",
+    "phase_gating": true,
+    "overflow_carries": false
+  },
+  "reference_fight": {
+    "_doc": "扫描出的平衡参考(贪心AI胜率~50%, 真人更高), 见 arena_boss_tune.py。",
+    "boss_hp": 240,
+    "phases": 2,
+    "threat": [16, 24],
+    "expected_turns": "7-9",
+    "oneshot_rate": 0.0
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "_doc": "Boss/精英 资产表。每个boss = 血量 + 阶段(各阶段威胁与机制) + 美术 + 文案。机制类型见 场面争夺_资产系统.md 的'机制目录'。改血量/threat/机制参数即可调平衡, 无需改代码。",
+  "schema_version": 1,
+  "bosses": [
+    {
+      "id": "cave_boar",
+      "name": "洞穴野猪",
+      "role": "tutorial_elite",
+      "layers": [1, 2],
+      "art": "enemy_boar_cave_circle.png",
+      "hp": 130,
+      "gating": true,
+      "intent": "皮糙肉厚，一下戳不动它",
+      "expected_turns": "3-4",
+      "teaches": "韧性: 两次中等输出 > 憋一次大的",
+      "phases": [
+        {"hp_share": 1.0, "threat": 12, "mechanics": [{"type": "resist", "soft": 60, "k": 0.5}]}
+      ]
+    },
+    {
+      "id": "stone_pangolin",
+      "name": "石壳穿山甲",
+      "role": "elite",
+      "layers": [2, 3],
+      "art": "TODO_enemy_pangolin_circle.png",
+      "hp": 160,
+      "gating": true,
+      "intent": "卷成硬壳，碎手戳不动",
+      "expected_turns": "3-5",
+      "teaches": "把牌攒成粗链(四连+)再打，别碎手",
+      "phases": [
+        {"hp_share": 0.5, "threat": 14, "mechanics": [{"type": "armor", "value": 6, "pierce_at": 100}]},
+        {"hp_share": 0.5, "threat": 14, "mechanics": [{"type": "armor", "value": 6, "pierce_at": 100}]}
+      ]
+    },
+    {
+      "id": "cerberus",
+      "name": "三头地狱犬",
+      "role": "boss",
+      "layers": [3, 4],
+      "art": "TODO_enemy_cerberus_circle.png",
+      "hp": 270,
+      "gating": true,
+      "intent": "三个头，各盯你一种打法",
+      "expected_turns": "5-7",
+      "teaches": "每阶段换一套牌型循环，不能一招通吃",
+      "phases": [
+        {"hp_share": 0.34, "threat": 14, "mechanics": [{"type": "shape_mod", "target": "run", "op": "halve"}], "label": "火头·顺子减半"},
+        {"hp_share": 0.33, "threat": 16, "mechanics": [{"type": "shape_mod", "target": "group", "op": "zero"}], "label": "冰头·刻子归零"},
+        {"hp_share": 0.33, "threat": 18, "mechanics": [{"type": "shape_mod", "target": "all", "op": "minus1"}], "label": "毒头·全链-1"}
+      ]
+    },
+    {
+      "id": "hyena_pack",
+      "name": "拾荒鬣狗群",
+      "role": "elite",
+      "layers": [4],
+      "art": "TODO_enemy_hyena_circle.png",
+      "hp_segments": [40, 40, 40, 40, 40, 40],
+      "gating": false,
+      "intent": "一巴掌只拍得死一只",
+      "expected_turns": "5-6",
+      "teaches": "把 base×mult 调到'刚好够'，别用大招收小命",
+      "phases": [
+        {"hp_share": 1.0, "threat": 16, "mechanics": [{"type": "single_target_no_splash"}, {"type": "summon", "every": 2, "count": 1, "cap": 6}]}
+      ]
+    },
+    {
+      "id": "swamp_hydra",
+      "name": "沼泽九头蛇",
+      "role": "boss",
+      "layers": [5],
+      "art": "TODO_enemy_hydra_circle.png",
+      "hp": 240,
+      "gating": true,
+      "intent": "最大的头开始充能，你看得到读条",
+      "expected_turns": "4-6",
+      "teaches": "抢杀 vs 转防的赌博",
+      "phases": [
+        {"hp_share": 0.5, "threat": 16, "mechanics": []},
+        {"hp_share": 0.5, "threat": 18, "mechanics": [{"type": "charge", "countdown": 3, "damage": 140, "interrupt": 120, "telegraph": true}]}
+      ]
+    },
+    {
+      "id": "rust_golem",
+      "name": "锈蚀傀儡",
+      "role": "boss",
+      "layers": [5, 6],
+      "art": "TODO_enemy_golem_circle.png",
+      "hp": 260,
+      "gating": true,
+      "intent": "每回合甩一摊油，弄脏一种颜色",
+      "expected_turns": "5-7",
+      "teaches": "预读脏色，提前把强链建在安全色上",
+      "phases": [
+        {"hp_share": 0.5, "threat": 16, "mechanics": [{"type": "dirty_color", "rotate": ["red", "blue", "orange"], "telegraph": true, "floor": 1}]},
+        {"hp_share": 0.5, "threat": 22, "mechanics": [{"type": "dirty_color", "rotate": ["red", "blue", "orange"], "telegraph": true, "floor": 1}]}
+      ]
+    },
+    {
+      "id": "greedy_gargoyle",
+      "name": "贪婪石像鬼",
+      "role": "boss",
+      "layers": [6, 7],
+      "art": "TODO_enemy_gargoyle_circle.png",
+      "hp": 280,
+      "gating": true,
+      "intent": "你砸得越狠，碎石反弹越疼",
+      "expected_turns": "4-6",
+      "teaches": "精算最后一击，别用大招超量收残血",
+      "phases": [
+        {"hp_share": 0.5, "threat": 16, "mechanics": [{"type": "overflow_reflect", "pct": 0.5}]},
+        {"hp_share": 0.5, "threat": 20, "mechanics": [{"type": "overflow_reflect", "pct": 0.5}]}
+      ]
+    },
+    {
+      "id": "abyssal_polluter",
+      "name": "深渊污染者",
+      "role": "boss",
+      "layers": [7, 8],
+      "art": "TODO_enemy_polluter_circle.png",
+      "hp": 300,
+      "gating": true,
+      "intent": "把你的牌库灌进污泥",
+      "expected_turns": "6-8",
+      "teaches": "换牌排泥 vs 留着搏大链的资源分配",
+      "phases": [
+        {"hp_share": 0.5, "threat": 14, "mechanics": [{"type": "pollute_deck", "per_turn": 1}]},
+        {"hp_share": 0.5, "threat": 20, "mechanics": [{"type": "pollute_deck", "per_turn": 2}], "label": "狂暴·污染加速"}
+      ]
+    },
+    {
+      "id": "ancient_colossus",
+      "name": "远古巨像·守关者",
+      "role": "final_boss",
+      "layers": [8],
+      "art": "TODO_enemy_colossus_circle.png",
+      "hp": 340,
+      "gating": true,
+      "intent": "封印的远古巨像，集前面所有试炼于一身",
+      "expected_turns": "7-9",
+      "teaches": "把粗链/绕脏色/抢节奏串起来用",
+      "phases": [
+        {"hp_share": 0.34, "threat": 14, "mechanics": [{"type": "cap_hit_pct", "pct": 0.40}, {"type": "armor", "value": 8}], "label": "霸体·护甲"},
+        {"hp_share": 0.33, "threat": 18, "mechanics": [{"type": "cap_hit_pct", "pct": 0.40}, {"type": "dirty_color", "rotate": ["red", "blue", "orange"], "telegraph": true, "floor": 1}], "label": "霸体·脏色"},
+        {"hp_share": 0.33, "threat": 22, "mechanics": [{"type": "cap_hit_pct", "pct": 0.40}, {"type": "charge", "countdown": 2, "damage": 200, "interrupt": 150, "telegraph": true}], "label": "霸体·终局斩"}
+      ]
+    }
+  ]
+}

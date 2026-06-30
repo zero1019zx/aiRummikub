@@ -1,0 +1,66 @@
+{
+  "_doc": "技能(主动)资产表。区别于遗物(被动常驻): 技能是玩家主动触发、有次数(charges, 每场战斗刷新)的能力, 用来救卡手/解debuff/小爆发。effect.type 见 场面争夺_资产系统.md 的'技能效果目录'。美术暂缺(icon=TODO), 可临时复用 ui/icons。",
+  "schema_version": 1,
+  "skills": [
+    {
+      "id": "redraw_hand",
+      "name": "重整旗鼓",
+      "icon": "TODO_skill_redraw.png",
+      "desc": "弃掉全部手牌, 重抽等量新牌",
+      "charges": 1,
+      "modes": ["arena", "battle"],
+      "category": "anti_stuck",
+      "effect": {"type": "redraw_hand"}
+    },
+    {
+      "id": "foresight",
+      "name": "探牌",
+      "icon": "TODO_skill_foresight.png",
+      "desc": "立即多摸2张牌",
+      "charges": 2,
+      "modes": ["arena", "battle"],
+      "category": "tempo",
+      "effect": {"type": "extra_draw", "count": 2}
+    },
+    {
+      "id": "thaw",
+      "name": "破冰",
+      "icon": "TODO_skill_thaw.png",
+      "desc": "解除本回合的冻结与脏色限制",
+      "charges": 1,
+      "modes": ["arena"],
+      "category": "anti_debuff",
+      "effect": {"type": "cleanse", "targets": ["freeze_chain", "dirty_color"]}
+    },
+    {
+      "id": "bulwark",
+      "name": "壁垒",
+      "icon": "TODO_skill_bulwark.png",
+      "desc": "本回合获得20点护盾, 抵挡敌方伤害",
+      "charges": 2,
+      "modes": ["arena", "battle"],
+      "category": "survival",
+      "effect": {"type": "shield", "value": 20}
+    },
+    {
+      "id": "focus_strike",
+      "name": "蓄力一击",
+      "icon": "TODO_skill_focus.png",
+      "desc": "本回合 base ×2 (仍受阶段门约束, 不会一招制敌)",
+      "charges": 1,
+      "modes": ["arena"],
+      "category": "burst",
+      "effect": {"type": "base_mult", "factor": 2.0}
+    },
+    {
+      "id": "stall",
+      "name": "拖延",
+      "icon": "TODO_skill_stall.png",
+      "desc": "Boss蓄力读条+1回合, 为你争取时间",
+      "charges": 1,
+      "modes": ["arena"],
+      "category": "anti_debuff",
+      "effect": {"type": "delay_charge", "turns": 1}
+    }
+  ]
+}

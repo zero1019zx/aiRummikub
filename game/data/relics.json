@@ -1,0 +1,28 @@
+{
+  "_doc": "遗物(被动)资产表。沿用 relics.gd 的 id/name/short/desc/price, 但把效果数值抽成 params(可调)。hook=挂载点(代码在该时机查询此遗物), modes=适用模式, category=分类(便于商店配池与平衡)。新增 arena 存活/伤害遗物在下半区。",
+  "schema_version": 1,
+  "relics": [
+    {"id": "orange_fever", "name": "橙色狂热", "short": "橙", "icon": "orange_frenzy.png", "desc": "橙色牌按双倍chips结算", "price": 6, "rarity": "common", "modes": ["battle"], "category": "damage", "hook": "chips_for_set", "params": {"color": 2, "mult": 2}},
+    {"id": "iron_group", "name": "铁刻印", "short": "刻", "icon": "iron_seal.png", "desc": "打出含新牌的刻子额外+10 chips", "price": 5, "rarity": "common", "modes": ["battle"], "category": "damage", "hook": "chips_for_set", "params": {"kind": "group", "bonus": 10}},
+    {"id": "half_pair", "name": "半价对子", "short": "对", "icon": "half_price_pair.png", "desc": "对子按半值计chips(原本为0)", "price": 5, "rarity": "common", "modes": ["battle"], "category": "damage", "hook": "chips_for_set", "params": {"kind": "pair", "ratio": 0.5}},
+    {"id": "demolisher", "name": "拆迁办", "short": "拆", "icon": "demolition_office.png", "desc": "重组系数 0.5x → 0.8x", "price": 8, "rarity": "rare", "modes": ["battle"], "category": "damage", "hook": "mult_step", "params": {"step": 0.8}},
+    {"id": "land_flag", "name": "夺地旗", "short": "旗", "icon": "land_grab_flag.png", "desc": "重组对手铺的牌, 每张额外+0.3x", "price": 7, "rarity": "rare", "modes": ["battle"], "category": "damage", "hook": "enemy_reorg_bonus", "params": {"per_tile": 0.3}},
+    {"id": "wood_shield", "name": "木盾", "short": "盾", "icon": "wooden_shield.png", "desc": "敌方每回合伤害-2", "price": 5, "rarity": "common", "modes": ["battle", "arena"], "category": "survival", "hook": "modify_enemy_damage", "params": {"flat": 2}},
+    {"id": "vampire_fang", "name": "吸血牙", "short": "牙", "icon": "vampire_fang.png", "desc": "你造成伤害的20%转为体力", "price": 7, "rarity": "rare", "modes": ["battle", "arena"], "category": "survival", "hook": "lifesteal", "params": {"ratio": 0.2, "cap_per_turn": 20}},
+    {"id": "greedy_hand", "name": "贪婪之手", "short": "手", "icon": "greedy_hand.png", "desc": "每回合多摸1张牌", "price": 6, "rarity": "rare", "modes": ["battle", "arena"], "category": "tempo", "hook": "draw_count", "params": {"extra": 1}},
+    {"id": "recycler", "name": "回收商", "short": "收", "icon": "recycler.png", "desc": "换走的牌返还50%面值, 计入下回合", "price": 5, "rarity": "common", "modes": ["battle", "arena"], "category": "economy", "hook": "exchange_refund", "params": {"ratio": 0.5}},
+    {"id": "smoke_bomb", "name": "烟雾弹", "short": "烟", "icon": "smoke_bomb.png", "desc": "敌方摸牌有25%概率落空", "price": 6, "rarity": "common", "modes": ["battle"], "category": "tempo", "hook": "enemy_draw_blocked", "params": {"chance": 0.25}},
+    {"id": "double_pair", "name": "双对执照", "short": "双", "icon": "double_pair_license.png", "desc": "每回合可打出2个对子", "price": 4, "rarity": "common", "modes": ["battle", "arena"], "category": "tempo", "hook": "pair_limit", "params": {"limit": 2}},
+    {"id": "piggy_bank", "name": "存钱罐", "short": "罐", "icon": "piggy_bank.png", "desc": "过层时每5金存款产1利息(上限5)", "price": 5, "rarity": "common", "modes": ["battle", "arena"], "category": "economy", "hook": "interest", "params": {"per": 5, "cap": 5}},
+
+    {"id": "stone_skin", "name": "石肤", "short": "肤", "icon": "TODO_stone_skin.png", "desc": "受到的伤害-15%", "price": 7, "rarity": "rare", "modes": ["arena"], "category": "survival", "hook": "modify_enemy_damage", "params": {"pct": 0.15}},
+    {"id": "second_wind", "name": "再起之风", "short": "息", "icon": "TODO_second_wind.png", "desc": "每回合定额回复+6", "price": 6, "rarity": "common", "modes": ["arena"], "category": "survival", "hook": "regen", "params": {"flat": 6}},
+    {"id": "aegis_charm", "name": "庇护符", "short": "庇", "icon": "TODO_aegis.png", "desc": "每场战斗首次致死改为留1血", "price": 9, "rarity": "epic", "modes": ["arena", "battle"], "category": "survival", "hook": "lethal_save", "params": {"per_fight": 1, "leave_hp": 1}},
+    {"id": "phase_anchor", "name": "阶段锚", "short": "锚", "icon": "TODO_phase_anchor.png", "desc": "Boss每次阶段切换, 回复12血", "price": 7, "rarity": "rare", "modes": ["arena"], "category": "survival", "hook": "on_phase_change", "params": {"heal": 12}},
+    {"id": "long_chain_master", "name": "长链宗师", "short": "链", "icon": "TODO_long_chain.png", "desc": "五连及以上的链, 牌型分+1", "price": 7, "rarity": "rare", "modes": ["arena"], "category": "damage", "hook": "shape_score_mod", "params": {"min_len": 5, "bonus": 1}},
+    {"id": "fresh_focus", "name": "专注新章", "short": "鲜", "icon": "TODO_fresh_focus.png", "desc": "每回合首条新鲜链, 倍率+2", "price": 6, "rarity": "common", "modes": ["arena"], "category": "damage", "hook": "arena_settle", "params": {"first_chain_mult": 2}},
+    {"id": "heavy_hand", "name": "重手", "short": "重", "icon": "TODO_heavy_hand.png", "desc": "本回合每打出1张牌, base+1", "price": 6, "rarity": "common", "modes": ["arena"], "category": "damage", "hook": "arena_base", "params": {"per_card": 1}},
+    {"id": "combo_engine", "name": "重组引擎", "short": "组", "icon": "TODO_combo_engine.png", "desc": "把桌面旧链重排成新链时, base+3", "price": 8, "rarity": "rare", "modes": ["arena"], "category": "damage", "hook": "arena_recompose", "params": {"bonus": 3}},
+    {"id": "cleanse_totem", "name": "净化图腾", "short": "净", "icon": "TODO_cleanse.png", "desc": "每2回合自动解除1个负面(冻结/脏色)", "price": 6, "rarity": "rare", "modes": ["arena"], "category": "tempo", "hook": "auto_cleanse", "params": {"every": 2, "count": 1}}
+  ]
+}
